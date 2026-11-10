@@ -185,3 +185,4 @@ Proyecto 1/
 | **3. Desarrollo y Usabilidad de la Aplicación** | 20% | **Excelente (100%)** | App interactiva en Streamlit completa con Buscador por cliente (scoring en vivo + SHAP), Panel consolidado de cartera (KPIs y dispersión) y Simulador dinámico de costos/ROI. |
 | **4. Calidad del Informe Ejecutivo y Explicabilidad** | 15% | **Excelente (100%)** | Informe ejecutivo completo estructurado según las 5 secciones oficiales, con métricas de ROI (686.67%), capital rescatable (\$484.4M), SHAP global y exportado en PDF. |
 | **5. Reproducibilidad y Calidad de Código** | 10% | **Excelente (100%)** | Código modular desacoplado (`src/`), canal de inferencia separado de entrenamiento, archivos `.pt`/`.joblib` persistidos y `requirements.txt` completo. |
+

@@ -96,3 +96,4 @@ A continuación se detalla la segmentación institucional resultante sobre la ca
 * **Semanas 3 a 6 (Prueba Piloto A/B):** Operación en paralelo: Grupo de Control (criterio tradicional sin filtro de rentabilidad) vs. Grupo Experimental (Deep Retention con restricción estricta de margen).
 * **Semana 7:** Evaluación de resultados preliminares del piloto (tasa de aceptación, ahorro de presupuesto y margen neto rescatado).
 * **Semanas 8 a 10:** Despliegue general en la red completa de sucursales e integración vía API con el sistema central de banca en línea.
+

@@ -214,3 +214,4 @@ def load_trained_model(model_path: str, device: str = 'cpu') -> DeepRetentionMLP
     model.to(device)
     model.eval()
     return model
+

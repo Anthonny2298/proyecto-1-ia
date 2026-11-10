@@ -111,3 +111,4 @@ def preprocess_single_client(client_data: dict, preprocessor: ColumnTransformer)
     """Prepara un único registro de cliente para inferencia en tiempo real."""
     df_single = pd.DataFrame([client_data])
     return transform_data(preprocessor, df_single)
+

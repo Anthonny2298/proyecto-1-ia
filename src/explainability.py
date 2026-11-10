@@ -61,3 +61,4 @@ def explain_single_client(explainer, client_features: np.ndarray, feature_names:
     # Ordenar por magnitud de impacto
     contributions = sorted(contributions, key=lambda x: abs(x['shap_value']), reverse=True)
     return contributions
+
