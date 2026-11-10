@@ -1,0 +1,76 @@
+Propuesta de Proyecto: Sistema de Retención Selectiva de Clientes
+De: Dirección de Estrategia y Rentabilidad de Clientes
+
+Para: Equipo de Desarrollo e Inteligencia de Negocios
+
+Asunto: Especificaciones Operativas – Sistema "Deep Retention"
+
+La retención indiscriminada de clientes está afectando negativamente el margen operativo de nuestra entidad bancaria. Gastar presupuesto en promociones, bonificaciones y tasas preferenciales para usuarios que mantienen saldos mínimos o generan pérdidas netas no tiene viabilidad financiera. Por disposición de la Junta Directiva, es obligatorio implementar un motor predictivo basado en Redes Neuronales para estimar el riesgo de fuga y automatizar la toma de decisiones.
+
+La aplicación resultante debe apegarse a una directriz de negocio estricta: únicamente se autoriza la activación de un plan de retención comercial si el cliente representa una ganancia potencial neta para el banco tras deducir el costo del beneficio ofrecido.
+
+Objetivos del Proyecto
+Motor de Predicción con Redes Neuronales: Diseñar y desplegar una arquitectura de red neuronal profunda que procese el historial y características del cliente para calcular una probabilidad precisa de abandono (un valor continuo entre 0.00 y 1.00).
+Filtro de Rentabilidad Financiera Neta: La herramienta debe cruzar la probabilidad estimada por la red con el valor patrimonial y los márgenes del cliente (balances, comisiones y volumen transaccional). Si un cliente con alto riesgo de abandono es deficitario, el sistema debe catalogarlo como "Salida Permitida" y bloquear cualquier gasto de fidelización.
+Catálogo de Acciones de Retención: Asignación automatizada de intervenciones según el perfil y costo unitario (por ejemplo: gestor asignado para cuentas patrimoniales, exoneración de comisiones para usuarios medianos o bonificaciones transaccionales).
+Aplicación Interactiva Integral:
+Buscador por Cliente: Entrada individual para ejecutivos donde se visualice el puntaje de la red neuronal, el impacto monetario proyectado y la decisión comercial sugerida.
+Panel de Cartera (Dashboard): Monitoreo de balance total en riesgo, efectividad proyectada de las intervenciones y dinero consolidado a rescatar.
+Simulador de Parámetros: Herramienta para ajustar los costos de las campañas de retención y proyectar el impacto en la rentabilidad neta.
+Guía de Inicio para Principiantes: Redes Neuronales en Datos Tabulares
+Preprocesamiento y Escalado de Variables (Obligatorio): Las redes neuronales son sensibles a las diferentes magnitudes numéricas. Variables como saldos monetarios o límites crediticios deben normalizarse o estandarizarse (mediante StandardScaler o MinMaxScaler) para evitar que los gradientes se desborden o se bloquee el aprendizaje.
+Codificación Categórica: Conviertan variables de texto o categorías (como país, género o tipo de contrato) a formato numérico usando OneHotEncoder antes de alimentar las capas de entrada de la red.
+Tratamiento del Desbalance de Clientes: La proporción de usuarios que abandonan suele ser menor que la de los retenidos. Para que la red no aprenda a clasificar a todos en la clase mayoritaria, utilicen ponderación de clases en la función de pérdida (por ejemplo, class_weight en Keras o pos_weight en BCEWithLogitsLoss de PyTorch).
+Arquitectura Recomendada para Iniciar: Construyan un Perceptrón Multicapa (MLP) simple de 2 a 3 capas densas:
+Capa 1: 64 a 128 neuronas con activación ReLU, Batch Normalization y Dropout (0.2 a 0.3).
+Capa 2: 32 a 64 neuronas con activación ReLU y Dropout (0.1 a 0.2).
+Capa de Salida: 1 neurona con activación Sigmoide para emitir una probabilidad entre 0 y 1.
+Prevención de Sobreajuste (Early Stopping): Monitoreen la pérdida en el conjunto de validación (val_loss) y detengan el entrenamiento tras 10 a 15 épocas sin mejora para asegurar que la red generalice adecuadamente.
+Cálculo de la Regla de Retención Financiera: No utilicen un umbral de corte fijo (0.5). Programen en la aplicación la siguiente fórmula de decisión:
+Ganancia Neta Esperada = (Probabilidad de Fuga × Efectividad del Incentivo × Margen del Cliente) - Costo del Incentivo
+
+La acción comercial solo se ejecuta si la Ganancia Neta Esperada es mayor a cero.
+
+Despliegue Rápido de la Aplicación: Utilicen librerías en Python como Streamlit o Gradio para construir la interfaz gráfica y conectarla con el modelo exportado sin requerir desarrollo web complejo.
+Plantilla: Informe Ejecutivo de Proyecto
+1. Resumen de Impacto Financiero y Retorno
+Volumen Total de Clientes Analizados: [Indicar número total]
+Monto Total de Capital en Riesgo Crítico: $[Monto en balance de clientes propensos a fuga]
+Capital Rescatable Estimado: $[Monto correspondiente a clientes rentables a intervenir]
+Inversión Total en Campañas de Fidelización: $[Costo acumulado de las acciones sugeridas]
+Retorno Sobre la Inversión (ROI): [Porcentaje de beneficio neto sobre la inversión]
+2. Arquitectura de la Solución y Diagnóstico de Fuga
+Configuración de la Red Neuronal: [Descripción breve de la arquitectura: capas, funciones de activación y optimizador empleado].
+
+Métricas de Diagnóstico Técnico: ROC-AUC: [Valor] | Precision-Recall AUC: [Valor] | Precisión de Calibración: [Valor].
+
+Factores Determinantes de Abandono:
+
+[Factor principal identificado por la red o por análisis de explicabilidad]
+[Segundo factor de impacto en la deserción]
+[Tercer factor de impacto en la deserción]
+3. Matriz de Decisión Comercial y Rentabilidad
+Segmento	Probabilidad Red	Valor Patrimonial	Decisión del Sistema	Incentivo Asignado	Costo ($)	Margen Proyectado
+A: Alto Valor / Alto Riesgo	≥ 0.65	Saldo Superior	Retención Prioritaria	Gestor VIP y Tarifa Plana	$[Costo]	$[Retorno Neto]
+B: Medio / Riesgo Moderado	≥ 0.65	Saldo Medio	Retención Automatizada	Bonificación Transaccional	$[Costo]	$[Retorno Neto]
+C: No Rentable	≥ 0.65	Saldo Bajo / Deficitario	Salida Permitida	Sin intervención	$0.00	Ahorro Operativo
+D: Estable	< 0.30	Cualquier Saldo	Sin Acción Requerida	Mantenimiento Ordinario	$0.00	Estable
+4. Operación de la Aplicación en Sucursales
+Procedimiento del Gestor de Cuentas: [Descripción del protocolo paso a paso para consultar al cliente e implementar la recomendación emitida].
+
+Mantenimiento del Modelo: [Frecuencia programada para actualización de datos y reentrenamiento de la red].
+
+5. Conclusiones y Próximos Pasos
+[Estrategia recomendada para la ejecución de una prueba piloto y cronograma de despliegue general].
+
+Rúbrica de Evaluación del Proyecto
+Criterio de Evaluación	Ponderación	Excelente (90 - 100%)	Competente (70 - 89%)	Necesita Mejora (< 70%)
+1. Arquitectura y Entrenamiento de Redes Neuronales	30%	Implementa un Perceptrón Multicapa funcional con preparación rigurosa (escalado numérico y codificación categórica), control de sobreajuste (Dropout/Early Stopping) y manejo adecuado del desbalance.	Construye una red neuronal que entrena y converge, pero carece de regularización suficiente, ignora el desbalance o presenta fallas menores en el escalado.	No utiliza redes neuronales, el modelo diverge durante el entrenamiento o presenta fuga evidente de datos (data leakage).
+2. Lógica Financiera y Retención Rentable	25%	Modela formalmente la ecuación de ganancia neta esperada; la aplicación restringe la retención a clientes con balance positivo tras deducir el costo del beneficio comercial.	Aplica filtros de saldo o segmentación comercial, pero utiliza umbrales fijos sin vincular matemáticamente el costo del incentivo a la probabilidad de la red.	Se limita a predecir la probabilidad de fuga sin considerar costos operativos, balances ni rentabilidad para el banco.
+3. Desarrollo y Usabilidad de la Aplicación	20%	Aplicación interactiva completa y funcional (Streamlit/Gradio/Dash) con consulta individual por cliente, panel consolidado de cartera y simulador de costos.	Aplicación operativa conectada al modelo, pero con interfaz rígida, sin panel consolidado o con errores al ingresar datos nuevos.	No entrega aplicación funcional o la solución se limita a scripts de terminal sin interfaz utilizable para un gestor bancario.
+4. Calidad del Informe Ejecutivo y Explicabilidad	15%	Informe estructurado con métricas claras de ROI, balance salvado y uso de técnicas de interpretabilidad (como SHAP) para justificar las decisiones de la red.	Informe comprensible pero redactado con excesivo tecnicismo, omitiendo la justificación de las variables que influyen en la red o el cálculo del ROI.	Informe incompleto, sin balance financiero o presentado como una exportación desorganizada de código sin enfoque gerencial.
+5. Reproducibilidad y Calidad de Código	10%	Código limpio y modular; canal de inferencia separado del entrenamiento; incluye archivo de dependencias (requirements.txt) y pesos guardados del modelo.	Código funcional en un único script o cuaderno con dependencias incompletas que requieren intervención manual para su ejecución.	Código no reproducible, rutas locales rotas o ausencia de los archivos del modelo entrenado.
+ 
+
+La entrega debe ser un repositorio github con el proyecto, su respectivo readme.md con un vínculo al informe ejecutivo en PDF
+

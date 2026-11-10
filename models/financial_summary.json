@@ -1,0 +1,11 @@
+{
+    "total_clients": 10000,
+    "total_balance_at_risk": 193608308.51999998,
+    "rescuable_balance": 484441965.28,
+    "total_investment": 447680.0,
+    "total_net_gain": 3074102.813154623,
+    "roi_percent": 686.674145182859,
+    "num_intervened": 4022,
+    "num_allowed_exit": 1139,
+    "num_stable": 4839
+}

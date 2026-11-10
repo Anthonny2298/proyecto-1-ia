@@ -1,0 +1,98 @@
+{
+    "feature_names": [
+        "CreditScore",
+        "Age",
+        "Tenure",
+        "Balance",
+        "NumOfProducts",
+        "HasCrCard",
+        "IsActiveMember",
+        "EstimatedSalary",
+        "Geography_France",
+        "Geography_Germany",
+        "Geography_Spain",
+        "Gender_Female",
+        "Gender_Male"
+    ],
+    "ranking": [
+        {
+            "feature": "NumOfProducts",
+            "importance": 0.11810386187841904
+        },
+        {
+            "feature": "Age",
+            "importance": 0.11439730430652315
+        },
+        {
+            "feature": "IsActiveMember",
+            "importance": 0.0696269996109537
+        },
+        {
+            "feature": "Geography_Germany",
+            "importance": 0.03288640482087895
+        },
+        {
+            "feature": "Balance",
+            "importance": 0.02941528711253488
+        },
+        {
+            "feature": "Gender_Female",
+            "importance": 0.023980785908020028
+        },
+        {
+            "feature": "Gender_Male",
+            "importance": 0.02204187259131158
+        },
+        {
+            "feature": "Geography_France",
+            "importance": 0.01636331585433336
+        },
+        {
+            "feature": "Tenure",
+            "importance": 0.011168437867008966
+        },
+        {
+            "feature": "CreditScore",
+            "importance": 0.00863318156635629
+        },
+        {
+            "feature": "Geography_Spain",
+            "importance": 0.008416883679680935
+        },
+        {
+            "feature": "HasCrCard",
+            "importance": 0.008116342761253946
+        },
+        {
+            "feature": "EstimatedSalary",
+            "importance": 0.0072358796953618095
+        }
+    ],
+    "top_factors": [
+        {
+            "rank": 1,
+            "feature": "NumOfProducts",
+            "importance": 0.11810386187841904
+        },
+        {
+            "rank": 2,
+            "feature": "Age",
+            "importance": 0.11439730430652315
+        },
+        {
+            "rank": 3,
+            "feature": "IsActiveMember",
+            "importance": 0.0696269996109537
+        },
+        {
+            "rank": 4,
+            "feature": "Geography_Germany",
+            "importance": 0.03288640482087895
+        },
+        {
+            "rank": 5,
+            "feature": "Balance",
+            "importance": 0.02941528711253488
+        }
+    ]
+}
