@@ -52,14 +52,51 @@ st.markdown("""
 <style>
     .main-header {
         font-size: 2.2rem;
-        font-weight: 700;
-        color: #1E3A8A;
+        font-weight: 800;
+        color: var(--text-color, #1E293B);
+        letter-spacing: -0.5px;
         margin-bottom: 0.2rem;
     }
+    .main-header .brand-accent {
+        color: #2563EB;
+    }
     .sub-header {
-        font-size: 1.1rem;
-        color: #4B5563;
+        font-size: 1.05rem;
+        color: var(--text-color, #475569);
+        opacity: 0.82;
         margin-bottom: 1.5rem;
+    }
+
+    /* Adaptación automática para temas oscuros (fondo negro / modo noche) */
+    @media (prefers-color-scheme: dark) {
+        .main-header {
+            color: #F8FAFC !important;
+        }
+        .main-header .brand-accent {
+            color: #60A5FA !important;
+        }
+        .sub-header {
+            color: #CBD5E1 !important;
+            opacity: 0.95;
+        }
+    }
+
+    /* Compatibilidad directa con el selector de tema de Streamlit */
+    [data-theme="dark"] .main-header,
+    .stApp[data-theme="dark"] .main-header,
+    [data-base-mode="dark"] .main-header {
+        color: #F8FAFC !important;
+    }
+    [data-theme="dark"] .main-header .brand-accent,
+    .stApp[data-theme="dark"] .main-header .brand-accent,
+    [data-base-mode="dark"] .main-header .brand-accent {
+        color: #60A5FA !important;
+    }
+    [data-theme="dark"] .sub-header,
+    .stApp[data-theme="dark"] .sub-header,
+    [data-base-mode="dark"] .sub-header {
+        color: #CBD5E1 !important;
+        opacity: 0.95;
     }
     .metric-card {
         background: #F8FAFC;
@@ -189,8 +226,8 @@ st.sidebar.info(
 
 
 # Encabezado Principal
-st.markdown("<div class='main-header'>Sistema Deep Retention: Inteligencia y Rentabilidad</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>Dirección de Estrategia y Rentabilidad de Clientes | Optimización Selectiva de Presupuesto de Fidelización</div>", unsafe_allow_html=True)
+st.markdown("<div class='main-header'>Sistema <span class='brand-accent'>Deep Retention</span>: Inteligencia y Rentabilidad</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>Dirección de Estrategia y Rentabilidad de Clientes &nbsp;|&nbsp; Optimización Selectiva de Presupuesto de Fidelización</div>", unsafe_allow_html=True)
 
 # Pestañas de Navegación
 tab1, tab2, tab3 = st.tabs([
@@ -561,3 +598,4 @@ with tab3:
         "incluso cuando los costos unitarios de los incentivos aumentan, el sistema bloquea automáticamente las cuentas que dejan de ser viables, "
         "preservando siempre márgenes netos positivos para la entidad bancaria."
     )
+
