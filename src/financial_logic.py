@@ -159,17 +159,29 @@ def analyze_portfolio(df_portfolio: pd.DataFrame, predictions: np.ndarray, param
         results.append(eval_res)
         
     df_eval = pd.DataFrame(results)
-    df_combined = pd.concat([df_portfolio.reset_index(drop=True), df_eval], axis=1)
+    
+    # Evitar duplicación de columnas si df_portfolio ya contiene campos calculados previamente
+    overlap_cols = [col for col in df_eval.columns if col in df_portfolio.columns]
+    base_df = df_portfolio.drop(columns=overlap_cols, errors='ignore').reset_index(drop=True)
+    df_combined = pd.concat([base_df, df_eval], axis=1)
+    
+    # Asegurar que las series sean 1D para evitar errores de indexación multidimensional
+    p_churn_series = df_combined['p_churn'].squeeze()
+    balance_series = df_combined['Balance'].squeeze()
+    action_series = df_combined['action_authorized'].squeeze()
+    decision_series = df_combined['decision'].squeeze()
+    cost_series = df_combined['incentive_cost'].squeeze()
+    net_gain_series = df_combined['expected_net_gain'].squeeze()
     
     # Métricas consolidadas requeridas en la plantilla ejecutiva
     total_clients = len(df_combined)
-    high_risk_mask = df_combined['p_churn'] >= p['high_risk_threshold']
-    intervened_mask = df_combined['action_authorized'] == True
+    high_risk_mask = p_churn_series >= p['high_risk_threshold']
+    intervened_mask = action_series == True
     
-    total_balance_at_risk = df_combined.loc[high_risk_mask, 'Balance'].sum()
-    rescuable_balance = df_combined.loc[intervened_mask, 'Balance'].sum()
-    total_investment = df_combined.loc[intervened_mask, 'incentive_cost'].sum()
-    total_net_gain = df_combined.loc[intervened_mask, 'expected_net_gain'].sum()
+    total_balance_at_risk = float(balance_series[high_risk_mask].sum())
+    rescuable_balance = float(balance_series[intervened_mask].sum())
+    total_investment = float(cost_series[intervened_mask].sum())
+    total_net_gain = float(net_gain_series[intervened_mask].sum())
     
     roi_percent = (total_net_gain / total_investment * 100.0) if total_investment > 0 else 0.0
     
@@ -181,8 +193,9 @@ def analyze_portfolio(df_portfolio: pd.DataFrame, predictions: np.ndarray, param
         'total_net_gain': total_net_gain,
         'roi_percent': roi_percent,
         'num_intervened': int(intervened_mask.sum()),
-        'num_allowed_exit': int((df_combined['decision'].str.contains('Salida Permitida')).sum()),
-        'num_stable': int((df_combined['decision'] == 'Sin Acción Requerida').sum())
+        'num_allowed_exit': int((decision_series.astype(str).str.contains('Salida Permitida')).sum()),
+        'num_stable': int((decision_series == 'Sin Acción Requerida').sum())
     }
     
     return df_combined, summary
+
