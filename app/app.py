@@ -1,547 +1,310 @@
 """
-Deep Retention - Aplicación Integral de Retención Selectiva de Clientes Bancarios
-Desarrollada para la Dirección de Estrategia y Rentabilidad de Clientes.
-Incluye:
-1. Buscador Individual y Diagnóstico por Cliente (Inferencia NN + SHAP + Decisión Financiera)
-2. Panel de Cartera (Dashboard con balance en riesgo, capital rescatable y ROI)
-3. Simulador Dinámico de Parámetros de Campaña
+Deep Retention - Aplicacion de Retencion Selectiva de Clientes Bancarios.
+1. Panel de Cartera (KPIs de capital en riesgo, capital a intervenir y ROI).
+2. Buscador por Cliente (probabilidad de la red, impacto monetario, decision y SHAP local).
+3. Simulador de parametros de campana.
+
+Uso:
+    streamlit run app/app.py
 """
 
 import os
 import sys
 import json
+
 import joblib
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
-import torch
+import streamlit as st
 
-# Añadir src al path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
-sys.path.append(os.path.join(project_root, 'src'))
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 
-from preprocessing import (
-    NUMERICAL_FEATURES,
-    CATEGORICAL_FEATURES,
-    DROP_COLUMNS,
-    TARGET_COLUMN,
-    transform_data
+from preprocessing import transform_data  # noqa: E402
+from model import load_trained_model, predict_proba  # noqa: E402
+from financial_logic import (  # noqa: E402
+    DEFAULT_FINANCIAL_PARAMS, DECISION_A, DECISION_B, DECISION_C, DECISION_D,
+    SEGMENT_A, SEGMENT_B, SEGMENT_C, SEGMENT_D, analyze_portfolio, evaluate_retention_strategy,
 )
-from model import load_trained_model, DeepRetentionMLP
-from financial_logic import (
-    DEFAULT_FINANCIAL_PARAMS,
-    evaluate_retention_strategy,
-    analyze_portfolio,
-    calculate_client_margin
-)
-from explainability import explain_single_client
+from explainability import build_explainer, explain_single_client  # noqa: E402
 
-# Configuración de página de Streamlit
-st.set_page_config(
-    page_title="Deep Retention | Sistema de Retención Selectiva",
-    page_icon="🏦",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+MODELS_DIR = os.path.join(PROJECT_ROOT, 'models')
+REQUIRED_ARTIFACTS = ('deep_retention_mlp.pt', 'preprocessor.joblib', 'shap_background.joblib',
+                      'test_metrics.json', 'shap_summary.json')
+SCORED_PATH = os.path.join(PROJECT_ROOT, 'data', 'portfolio_scored.csv')
 
-# Estilos CSS personalizados
+SEGMENT_COLORS = {SEGMENT_A: '#DC2626', SEGMENT_B: '#2563EB', SEGMENT_C: '#D97706', SEGMENT_D: '#10B981'}
+DECISION_COLORS = {DECISION_A: '#DC2626', DECISION_B: '#2563EB', DECISION_C: '#D97706', DECISION_D: '#10B981'}
+
+st.set_page_config(page_title="Deep Retention | Retención Selectiva", page_icon="🏦",
+                   layout="wide", initial_sidebar_state="expanded")
+
+# Indicador de carga: reemplaza la animacion deportiva de Streamlit por un spinner circular.
 st.markdown("""
 <style>
-    .badge-priority {
-        background-color: #DC2626;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
-    .badge-auto {
-        background-color: #2563EB;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
-    .badge-exit {
-        background-color: #D97706;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
-    .badge-stable {
-        background-color: #10B981;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
+[data-testid="stStatusWidgetRunningIcon"] > * { display: none !important; }
+[data-testid="stStatusWidgetRunningIcon"]::after {
+    content: ""; display: block; width: 18px; height: 18px; box-sizing: border-box;
+    border: 3px solid rgba(37, 99, 235, 0.2); border-top-color: #2563EB;
+    border-radius: 50%; animation: dr-spin 0.8s linear infinite;
+}
+@keyframes dr-spin { to { transform: rotate(360deg); } }
 </style>
 """, unsafe_allow_html=True)
 
 
 @st.cache_resource
 def load_artifacts():
-    """Carga los modelos entrenados y artefactos serializados."""
-    model_path = os.path.join(project_root, 'models', 'deep_retention_mlp.pt')
-    preproc_path = os.path.join(project_root, 'models', 'preprocessor.joblib')
-    bg_path = os.path.join(project_root, 'models', 'shap_background.joblib')
-    metrics_path = os.path.join(project_root, 'models', 'test_metrics.json')
-    shap_meta_path = os.path.join(project_root, 'models', 'shap_summary.json')
-    
-    model = load_trained_model(model_path, device='cpu')
-    preprocessor = joblib.load(preproc_path)
-    
-    bg_data = joblib.load(bg_path) if os.path.exists(bg_path) else None
-    
-    metrics = {}
-    if os.path.exists(metrics_path):
-        with open(metrics_path, 'r', encoding='utf-8') as f:
-            metrics = json.load(f)
-            
-    shap_meta = {}
-    if os.path.exists(shap_meta_path):
-        with open(shap_meta_path, 'r', encoding='utf-8') as f:
-            shap_meta = json.load(f)
-            
-    return model, preprocessor, bg_data, metrics, shap_meta
+    """Carga modelo, preprocesador, explicador SHAP y metricas. Falla si falta algo."""
+    missing = [n for n in REQUIRED_ARTIFACTS if not os.path.exists(os.path.join(MODELS_DIR, n))]
+    if missing or not os.path.exists(SCORED_PATH):
+        raise FileNotFoundError(f"Faltan artefactos: {missing or ['data/portfolio_scored.csv']}. "
+                                "Ejecute 'python train.py' antes de abrir la app.")
+    model = load_trained_model(os.path.join(MODELS_DIR, 'deep_retention_mlp.pt'))
+    preprocessor = joblib.load(os.path.join(MODELS_DIR, 'preprocessor.joblib'))
+    explainer = build_explainer(model, joblib.load(os.path.join(MODELS_DIR, 'shap_background.joblib')))
+    with open(os.path.join(MODELS_DIR, 'test_metrics.json'), encoding='utf-8') as f:
+        metrics = json.load(f)
+    with open(os.path.join(MODELS_DIR, 'shap_summary.json'), encoding='utf-8') as f:
+        shap_meta = json.load(f)
+    return model, preprocessor, explainer, metrics, shap_meta
 
 
 @st.cache_data
-def load_portfolio_data():
-    """Carga el dataset de clientes y predicciones consolidadas."""
-    scored_path = os.path.join(project_root, 'data', 'portfolio_scored.csv')
-    if os.path.exists(scored_path):
-        return pd.read_csv(scored_path)
-    raw_path = os.path.join(project_root, 'data', 'Churn_Modelling.csv')
-    return pd.read_csv(raw_path)
+def load_portfolio():
+    return pd.read_csv(SCORED_PATH)
 
 
-# Cargar artefactos
+@st.cache_data
+def run_analysis(params_items: tuple):
+    """Analisis de cartera cacheado por combinacion de parametros."""
+    portfolio = load_portfolio()
+    return analyze_portfolio(portfolio, portfolio['p_churn'].to_numpy(), dict(params_items))
+
+
 try:
-    model, preprocessor, bg_data, test_metrics, shap_meta = load_artifacts()
-    df_portfolio = load_portfolio_data()
-except Exception as e:
-    st.error(f"Error cargando los modelos o datos del proyecto: {e}")
+    model, preprocessor, explainer, test_metrics, shap_meta = load_artifacts()
+    df_portfolio = load_portfolio()
+except Exception as exc:  # fail-closed: sin artefactos no hay decisiones
+    st.error(f"No se pudo iniciar Deep Retention: {exc}")
     st.stop()
 
-
-# Barra Lateral (Sidebar) - Controles y Simulador de Parámetros
-st.sidebar.image("https://img.icons8.com/fluency/96/bank-building.png", width=70)
-st.sidebar.title("Deep Retention")
+# ---------------------------------------------------------------- Sidebar: parametros
+D = DEFAULT_FINANCIAL_PARAMS
+st.sidebar.title("🏦 Deep Retention")
 st.sidebar.caption("Motor de Retención Selectiva de Clientes Bancarios")
+st.sidebar.subheader("⚙️ Catálogo de incentivos")
+cost_vip = st.sidebar.slider("Costo Gestor VIP ($)", 50, 600, int(D['cost_vip']), 10)
+eff_vip = st.sidebar.slider("Efectividad Gestor VIP (%)", 5, 90, int(D['effectiveness_vip'] * 100), 5) / 100
+cost_auto = st.sidebar.slider("Costo Bonificación ($)", 10, 300, int(D['cost_auto']), 5)
+eff_auto = st.sidebar.slider("Efectividad Bonificación (%)", 5, 90, int(D['effectiveness_auto'] * 100), 5) / 100
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Parámetros del Motor Financiero")
+st.sidebar.subheader("💵 Margen del cliente")
+nim = st.sidebar.slider("Margen neto sobre saldo, NIM (%)", 0.5, 5.0, D['margin_balance_rate'] * 100, 0.1) / 100
+fee = st.sidebar.slider("Comisión anual por producto (% del salario)", 0.0, 1.5, D['margin_fee_rate'] * 100, 0.05) / 100
+cost_to_serve = st.sidebar.slider("Costo de servicio anual ($)", 0, 600, int(D['cost_to_serve']), 10)
 
-sim_cost_vip = st.sidebar.slider("Costo Gestor VIP ($)", 50, 500, int(DEFAULT_FINANCIAL_PARAMS['cost_vip']), 10)
-sim_eff_vip = st.sidebar.slider("Efectividad Gestor VIP (%)", 10, 90, int(DEFAULT_FINANCIAL_PARAMS['effectiveness_vip'] * 100), 5) / 100.0
-
-sim_cost_auto = st.sidebar.slider("Costo Bonificación Transaccional ($)", 10, 200, int(DEFAULT_FINANCIAL_PARAMS['cost_auto']), 5)
-sim_eff_auto = st.sidebar.slider("Efectividad Bonificación (%)", 10, 70, int(DEFAULT_FINANCIAL_PARAMS['effectiveness_auto'] * 100), 5) / 100.0
-
-sim_margin_balance = st.sidebar.slider("Margen Neto sobre Balance (NIM %)", 1.0, 5.0, float(DEFAULT_FINANCIAL_PARAMS['margin_balance_rate'] * 100), 0.1) / 100.0
-sim_high_balance = st.sidebar.number_input("Umbral Saldo Superior ($)", min_value=30000, max_value=200000, value=int(DEFAULT_FINANCIAL_PARAMS['high_balance_threshold']), step=5000)
-sim_low_balance = st.sidebar.number_input("Umbral Saldo Bajo / Deficitario ($)", min_value=5000, max_value=60000, value=int(DEFAULT_FINANCIAL_PARAMS['low_balance_threshold']), step=2500)
+st.sidebar.subheader("🎯 Segmentación")
+high_balance = st.sidebar.number_input("Saldo mínimo para Gestor VIP ($)", 10_000, 250_000,
+                                       int(D['high_balance_threshold']), 5_000)
+stable_thr, high_thr = st.sidebar.slider("Umbrales de riesgo (estable / alto)", 0.05, 0.95,
+                                         (D['stable_risk_threshold'], D['high_risk_threshold']), 0.05)
 
 current_params = {
-    'margin_balance_rate': sim_margin_balance,
-    'margin_fee_rate': DEFAULT_FINANCIAL_PARAMS['margin_fee_rate'],
-    'high_balance_threshold': float(sim_high_balance),
-    'low_balance_threshold': float(sim_low_balance),
-    'high_risk_threshold': DEFAULT_FINANCIAL_PARAMS['high_risk_threshold'],
-    'moderate_risk_threshold': DEFAULT_FINANCIAL_PARAMS['moderate_risk_threshold'],
-    'stable_risk_threshold': DEFAULT_FINANCIAL_PARAMS['stable_risk_threshold'],
-    'cost_vip': float(sim_cost_vip),
-    'effectiveness_vip': sim_eff_vip,
-    'cost_auto': float(sim_cost_auto),
-    'effectiveness_auto': sim_eff_auto
+    'cost_vip': float(cost_vip), 'effectiveness_vip': eff_vip,
+    'cost_auto': float(cost_auto), 'effectiveness_auto': eff_auto,
+    'margin_balance_rate': nim, 'margin_fee_rate': fee, 'cost_to_serve': float(cost_to_serve),
+    'high_balance_threshold': float(high_balance),
+    'stable_risk_threshold': float(stable_thr), 'high_risk_threshold': float(high_thr),
 }
+params_key = tuple(sorted(current_params.items()))
 
 st.sidebar.markdown("---")
 st.sidebar.info(
-    f"**Diagnóstico Técnico del Modelo**\n\n"
-    f"- **ROC-AUC:** {test_metrics.get('roc_auc', 0.8604):.4f}\n"
-    f"- **PR-AUC:** {test_metrics.get('pr_auc', 0.6923):.4f}\n"
-    f"- **Brier Score:** {test_metrics.get('brier_score', 0.1536):.4f}\n"
-    f"- **Recall Fuga:** {test_metrics.get('recall', 0.7974)*100:.1f}%"
+    "**Diagnóstico del modelo (Test)**\n\n"
+    f"- ROC-AUC: {test_metrics['roc_auc']:.4f}\n"
+    f"- PR-AUC: {test_metrics['pr_auc']:.4f}\n"
+    f"- Brier: {test_metrics['brier_score']:.4f}\n"
+    f"- ECE (calibración): {test_metrics['ece']:.4f}\n"
+    f"- Prob. media vs tasa real: {test_metrics['mean_predicted']:.3f} / {test_metrics['observed_rate']:.3f}"
 )
 
+st.title("🏦 Sistema Deep Retention")
+st.markdown("##### Retención solo cuando la Ganancia Neta Esperada es positiva")
+st.latex(r"\text{Ganancia} = P(\text{fuga}) \times \text{Efectividad} \times \text{Margen} - \text{Costo}")
 
-# Encabezado Principal (Renderizado nativo para contraste automático en modo claro y oscuro)
-st.title("🏦 Sistema Deep Retention: Inteligencia y Rentabilidad")
-st.markdown("##### 🏛️ Dirección de Estrategia y Rentabilidad de Clientes &nbsp;|&nbsp; *Optimización Selectiva de Presupuesto de Fidelización*")
-st.write("")
-
-# Pestañas de Navegación
-tab1, tab2, tab3 = st.tabs([
-    "📊 Panel de Cartera (Dashboard)",
-    "🔍 Buscador y Diagnóstico por Cliente",
-    "📈 Simulador de Rentabilidad & Escenarios"
-])
+tab1, tab2, tab3 = st.tabs(["📊 Panel de Cartera", "🔍 Buscador por Cliente", "📈 Simulador de Parámetros"])
+df_current, fin = run_analysis(params_key)
 
 
-# ==========================================
-# PESTAÑA 1: PANEL DE CARTERA (DASHBOARD)
-# ==========================================
+def money(x: float) -> str:
+    return f"${x / 1e6:,.2f}M" if abs(x) >= 1e6 else f"${x:,.0f}"
+
+
+# ---------------------------------------------------------------- Tab 1: cartera
 with tab1:
-    st.subheader("Monitoreo Consolidado de la Cartera de Clientes")
-    
-    # Recalcular cartera con los parámetros actuales si se modificaron
-    full_probs = df_portfolio['p_churn'].values if 'p_churn' in df_portfolio.columns else np.zeros(len(df_portfolio))
-    df_current, fin_summary = analyze_portfolio(df_portfolio, full_probs, current_params)
-    
-    # Tarjetas de Impacto Financiero
-    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-    
-    with kpi1:
-        st.metric(
-            label="Clientes Analizados",
-            value=f"{fin_summary['total_clients']:,}",
-            help="Volumen total de clientes evaluados por la red neuronal"
-        )
-    with kpi2:
-        st.metric(
-            label="Capital en Riesgo Crítico",
-            value=f"${fin_summary['total_balance_at_risk']/1e6:.2f}M",
-            delta="-Riesgo Abandono",
-            delta_color="inverse",
-            help="Saldos correspondientes a clientes con P(fuga) >= 65%"
-        )
-    with kpi3:
-        st.metric(
-            label="Capital Rescatable",
-            value=f"${fin_summary['rescuable_balance']/1e6:.2f}M",
-            delta="Patrimonio Salvado",
-            help="Balance de clientes rentables aprobados para intervención comercial"
-        )
-    with kpi4:
-        st.metric(
-            label="Presupuesto Invertido",
-            value=f"${fin_summary['total_investment']:,.0f}",
-            help="Costo total de campañas de retención autorizadas"
-        )
-    with kpi5:
-        st.metric(
-            label="Retorno Inversión (ROI)",
-            value=f"{fin_summary['roi_percent']:.1f}%",
-            delta=f"+${fin_summary['total_net_gain']/1e6:.2f}M Ganancia Neta",
-            help="Beneficio neto esperado sobre el presupuesto de fidelización"
-        )
-        
+    st.subheader("Monitoreo consolidado de la cartera")
+    r1 = st.columns(4)
+    r1[0].metric("Clientes analizados", f"{fin['total_clients']:,}")
+    r1[1].metric("Capital en riesgo", money(fin['total_balance_at_risk']),
+                 help=f"Saldo de clientes con P(fuga) >= {stable_thr:.2f}")
+    r1[2].metric("Capital crítico", money(fin['critical_balance_at_risk']),
+                 help=f"Saldo de clientes con P(fuga) >= {high_thr:.2f}")
+    r1[3].metric("Capital de clientes a intervenir", money(fin['rescuable_balance']),
+                 help="Saldo de los clientes con Ganancia Neta Esperada > 0 (subconjunto del capital en riesgo)")
+    r2 = st.columns(4)
+    r2[0].metric("Capital esperado a retener", money(fin['expected_balance_retained']),
+                 help="Suma de P(fuga) x Efectividad x Saldo de los clientes intervenidos")
+    r2[1].metric("Inversión en retención", money(fin['total_investment']))
+    r2[2].metric("Ganancia neta esperada", money(fin['total_net_gain']))
+    r2[3].metric("ROI", f"{fin['roi_percent']:.1f}%")
+    st.caption(f"Salida Permitida: {fin['num_allowed_exit']:,} clientes "
+               f"({fin['num_deficit_allowed_exit']:,} deficitarios). Gasto evitado: {money(fin['avoided_spend'])}. "
+               "Nota: la cartera incluye clientes usados en el entrenamiento; las cifras fuera de muestra "
+               "están en el informe (holdout de Test).")
+
     st.markdown("---")
-    
-    # Gráficos de Distribución
-    col_g1, col_g2 = st.columns([1, 1])
-    
-    with col_g1:
-        st.markdown("##### Segmentación de Cartera y Decisiones del Sistema")
-        seg_counts = df_current['segment'].value_counts().reset_index()
-        seg_counts.columns = ['Segmento', 'Clientes']
-        
-        color_map = {
-            'A: Alto Valor / Alto Riesgo': '#DC2626',
-            'B: Medio / Riesgo Moderado': '#2563EB',
-            'C: No Rentable': '#D97706',
-            'D: Estable': '#10B981'
-        }
-        fig_pie = px.pie(
-            seg_counts,
-            values='Clientes',
-            names='Segmento',
-            color='Segmento',
-            color_discrete_map=color_map,
-            hole=0.45
-        )
-        fig_pie.update_layout(margin=dict(t=20, b=20, l=10, r=10), height=320)
-        st.plotly_chart(fig_pie, use_container_width=True)
+    g1, g2 = st.columns(2)
+    with g1:
+        st.markdown("##### Segmentación de la cartera")
+        seg = df_current['segment'].value_counts().reset_index()
+        seg.columns = ['Segmento', 'Clientes']
+        fig = px.pie(seg, values='Clientes', names='Segmento', color='Segmento',
+                     color_discrete_map=SEGMENT_COLORS, hole=0.45)
+        fig.update_layout(margin=dict(t=20, b=20, l=10, r=10), height=320)
+        st.plotly_chart(fig, width='stretch')
+    with g2:
+        st.markdown("##### Margen del cliente vs probabilidad de fuga")
+        sample = df_current.sample(min(1500, len(df_current)), random_state=42)
+        fig = px.scatter(sample, x='client_margin', y='p_churn', color='decision',
+                         color_discrete_map=DECISION_COLORS,
+                         hover_data=['CustomerId', 'Balance', 'EstimatedSalary', 'expected_net_gain'],
+                         labels={'client_margin': 'Margen anual ($)', 'p_churn': 'P(fuga)', 'decision': 'Decisión'})
+        fig.add_hline(y=stable_thr, line_dash='dot', annotation_text=f'Estable < {stable_thr:.2f}')
+        fig.add_hline(y=high_thr, line_dash='dash', line_color='red', annotation_text=f'Alto riesgo >= {high_thr:.2f}')
+        fig.add_vline(x=0, line_dash='dot', line_color='orange', annotation_text='Margen 0')
+        fig.update_layout(margin=dict(t=20, b=20, l=10, r=10), height=320)
+        st.plotly_chart(fig, width='stretch')
 
-    with col_g2:
-        st.markdown("##### Regla de Negocio: Saldo vs. Probabilidad de Fuga")
-        # Submuestra para renderizado rápido y fluido
-        sample_df = df_current.sample(min(1200, len(df_current)), random_state=42)
-        fig_scatter = px.scatter(
-            sample_df,
-            x='Balance',
-            y='p_churn',
-            color='decision',
-            hover_data=['CustomerId', 'Age', 'EstimatedSalary', 'incentive_cost', 'expected_net_gain'],
-            labels={'Balance': 'Saldo en Cuenta ($)', 'p_churn': 'Probabilidad de Fuga (Red)', 'decision': 'Decisión'},
-            color_discrete_map={
-                'Retención Prioritaria': '#DC2626',
-                'Retención Automatizada': '#2563EB',
-                'Salida Permitida': '#D97706',
-                'Salida Permitida (Filtro Margen)': '#F59E0B',
-                'Sin Acción Requerida': '#10B981'
-            }
-        )
-        fig_scatter.add_hline(y=0.65, line_dash="dash", line_color="red", annotation_text="Alto Riesgo (0.65)")
-        fig_scatter.add_vline(x=current_params['low_balance_threshold'], line_dash="dot", line_color="orange", annotation_text="Umbral Deficitario")
-        fig_scatter.update_layout(margin=dict(t=20, b=20, l=10, r=10), height=320)
-        st.plotly_chart(fig_scatter, use_container_width=True)
+    st.markdown("##### Matriz de decisión")
+    matrix = df_current.groupby(['segment', 'decision', 'incentive_name']).agg(
+        Clientes=('p_churn', 'size'), P_media=('p_churn', 'mean'), Saldo_medio=('Balance', 'mean'),
+        Costo_total=('incentive_cost', 'sum'), Ganancia_neta=('expected_net_gain', 'sum')).reset_index()
+    st.dataframe(matrix.style.format({'P_media': '{:.2f}', 'Saldo_medio': '${:,.0f}',
+                                      'Costo_total': '${:,.0f}', 'Ganancia_neta': '${:,.0f}'}),
+                 width='stretch', hide_index=True)
 
-    # Tabla Filtrable de Clientes
-    st.markdown("##### Explorador Detallado de Clientes")
-    f_col1, f_col2, f_col3 = st.columns([2, 2, 2])
-    with f_col1:
-        segment_filter = st.multiselect(
-            "Filtrar por Segmento",
-            options=df_current['segment'].unique().tolist(),
-            default=df_current['segment'].unique().tolist()
-        )
-    with f_col2:
-        decision_filter = st.multiselect(
-            "Filtrar por Decisión Comercial",
-            options=df_current['decision'].unique().tolist(),
-            default=df_current['decision'].unique().tolist()
-        )
-    with f_col3:
-        min_bal = st.number_input("Saldo Mínimo ($)", value=0, step=10000)
+    st.markdown("##### Explorador de clientes")
+    f1, f2, f3 = st.columns(3)
+    seg_filter = f1.multiselect("Segmento", sorted(df_current['segment'].unique()),
+                                default=sorted(df_current['segment'].unique()))
+    dec_filter = f2.multiselect("Decisión", sorted(df_current['decision'].unique()),
+                                default=sorted(df_current['decision'].unique()))
+    min_bal = f3.number_input("Saldo mínimo ($)", value=0, step=10_000)
+    view = df_current[df_current['segment'].isin(seg_filter) & df_current['decision'].isin(dec_filter)
+                      & (df_current['Balance'] >= min_bal)]
+    cols = ['CustomerId', 'Surname', 'Geography', 'Age', 'Balance', 'NumOfProducts', 'p_churn',
+            'client_margin', 'segment', 'decision', 'incentive_name', 'incentive_cost', 'expected_net_gain']
+    st.dataframe(view[cols].style.format({'Balance': '${:,.2f}', 'p_churn': '{:.2%}', 'client_margin': '${:,.2f}',
+                                          'incentive_cost': '${:,.2f}', 'expected_net_gain': '${:,.2f}'}),
+                 height=320, width='stretch', hide_index=True)
+    st.caption(f"{len(view):,} clientes coincidentes.")
 
-    filtered_view = df_current[
-        (df_current['segment'].isin(segment_filter)) &
-        (df_current['decision'].isin(decision_filter)) &
-        (df_current['Balance'] >= min_bal)
-    ]
-    
-    display_cols = [
-        'CustomerId', 'Surname', 'Geography', 'Age', 'Balance', 'NumOfProducts',
-        'p_churn', 'segment', 'decision', 'incentive_name', 'incentive_cost', 'expected_net_gain'
-    ]
-    st.dataframe(
-        filtered_view[display_cols].style.format({
-            'Balance': '${:,.2f}',
-            'p_churn': '{:.2%}',
-            'incentive_cost': '${:,.2f}',
-            'expected_net_gain': '${:,.2f}'
-        }),
-        height=300,
-        use_container_width=True
-    )
-    st.caption(f"Mostrando {len(filtered_view):,} clientes coincidentes.")
-
-
-# ====================================================
-# PESTAÑA 2: BUSCADOR Y DIAGNÓSTICO POR CLIENTE
-# ====================================================
+# ---------------------------------------------------------------- Tab 2: cliente
 with tab2:
-    st.subheader("Consulta Individual para Gestores de Cuenta y Sucursales")
-    st.write("Ingrese el ID de un cliente existente o modifique las variables para realizar un análisis de scoring en tiempo real.")
+    st.subheader("Consulta individual para gestores de cuenta")
+    mode = st.radio("Modo", ["Cliente existente", "Perfil nuevo"], horizontal=True)
+    geo_options = list(preprocessor.named_transformers_['cat'].categories_[0])
+    gender_options = list(preprocessor.named_transformers_['cat'].categories_[1])
 
-    mode = st.radio("Modo de Consulta:", ["Buscar Cliente Existente por ID", "Simular Nuevo Perfil de Cliente"], horizontal=True)
-
-    if mode == "Buscar Cliente Existente por ID":
-        c_search, c_quick = st.columns([2, 3])
-        with c_search:
-            available_ids = df_portfolio['CustomerId'].tolist()
-            default_id = 15634602 if 15634602 in available_ids else available_ids[0]
-            selected_id = st.selectbox("Seleccione o escriba el ID del Cliente:", options=available_ids, index=available_ids.index(default_id))
-            client_row = df_portfolio[df_portfolio['CustomerId'] == selected_id].iloc[0]
-
-        with c_quick:
-            st.info(
-                f"**Ficha Rápida del Cliente #{client_row['CustomerId']} - {client_row.get('Surname', 'N/A')}**\n\n"
-                f"País: **{client_row['Geography']}** | Género: **{client_row['Gender']}** | Edad: **{client_row['Age']} años**\n\n"
-                f"Antigüedad: **{client_row['Tenure']} años** | Productos: **{client_row['NumOfProducts']}** | Tarjeta: **{'Sí' if client_row['HasCrCard'] else 'No'}**"
-            )
-
-        client_input = {
-            'CreditScore': float(client_row['CreditScore']),
-            'Geography': str(client_row['Geography']),
-            'Gender': str(client_row['Gender']),
-            'Age': int(client_row['Age']),
-            'Tenure': int(client_row['Tenure']),
-            'Balance': float(client_row['Balance']),
-            'NumOfProducts': int(client_row['NumOfProducts']),
-            'HasCrCard': int(client_row['HasCrCard']),
-            'IsActiveMember': int(client_row['IsActiveMember']),
-            'EstimatedSalary': float(client_row['EstimatedSalary'])
+    if mode == "Cliente existente":
+        ids = df_portfolio['CustomerId'].tolist()
+        selected = st.selectbox("ID del cliente", ids, index=0)
+        row = df_portfolio.loc[df_portfolio['CustomerId'] == selected].iloc[0]
+        st.info(f"**#{row['CustomerId']} - {row['Surname']}** | {row['Geography']} | {row['Gender']} | "
+                f"{row['Age']} años | Antigüedad {row['Tenure']} | Productos {row['NumOfProducts']} | "
+                f"Activo: {'Sí' if row['IsActiveMember'] else 'No'}")
+        client = {k: row[k] for k in ('CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance',
+                                      'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary')}
+    else:
+        c1, c2, c3 = st.columns(3)
+        client = {
+            'CreditScore': c1.number_input("CreditScore", 300, 850, 650),
+            'Geography': c1.selectbox("País", geo_options),
+            'Gender': c1.selectbox("Género", gender_options),
+            'Age': c1.slider("Edad", 18, 92, 42),
+            'Tenure': c2.slider("Antigüedad (años)", 0, 10, 4),
+            'Balance': c2.number_input("Saldo ($)", 0.0, 300_000.0, 95_000.0, step=5_000.0),
+            'NumOfProducts': c2.slider("Productos", 1, 4, 1),
+            'HasCrCard': c3.selectbox("Tarjeta de crédito", [1, 0], format_func=lambda x: "Sí" if x else "No"),
+            'IsActiveMember': c3.selectbox("Miembro activo", [1, 0], format_func=lambda x: "Sí" if x else "No"),
+            'EstimatedSalary': c3.number_input("Salario anual ($)", 0.0, 300_000.0, 85_000.0, step=5_000.0),
         }
 
-    else:
-        st.markdown("##### Parámetros del Perfil a Evaluar")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            in_credit = st.number_input("Puntaje Crediticio (CreditScore)", 300, 850, 650)
-            in_geo = st.selectbox("País (Geography)", ["France", "Germany", "Spain"])
-            in_gender = st.selectbox("Género", ["Female", "Male"])
-            in_age = st.slider("Edad", 18, 90, 42)
-        with col2:
-            in_tenure = st.slider("Antigüedad con el banco (Tenure en años)", 0, 10, 4)
-            in_balance = st.number_input("Saldo en Cuenta ($)", 0.0, 300000.0, 95000.0, step=5000.0)
-            in_products = st.slider("Número de Productos Bancarios", 1, 4, 2)
-        with col3:
-            in_card = st.selectbox("Posee Tarjeta de Crédito", [1, 0], format_func=lambda x: "Sí" if x == 1 else "No")
-            in_active = st.selectbox("Miembro Activo", [1, 0], format_func=lambda x: "Sí" if x == 1 else "No")
-            in_salary = st.number_input("Salario Estimado Anual ($)", 10000.0, 250000.0, 85000.0, step=5000.0)
-
-        client_input = {
-            'CreditScore': in_credit,
-            'Geography': in_geo,
-            'Gender': in_gender,
-            'Age': in_age,
-            'Tenure': in_tenure,
-            'Balance': in_balance,
-            'NumOfProducts': in_products,
-            'HasCrCard': in_card,
-            'IsActiveMember': in_active,
-            'EstimatedSalary': in_salary
-        }
-
-    # Inferencia en tiempo real con la Red Neuronal
-    single_df = pd.DataFrame([client_input])
-    proc_features = transform_data(preprocessor, single_df)
-    
-    with torch.no_grad():
-        t_input = torch.tensor(proc_features, dtype=torch.float32)
-        p_churn_pred = float(model.predict_proba(t_input).item())
-
-    # Evaluación financiera del cliente
-    fin_eval = evaluate_retention_strategy(
-        p_churn=p_churn_pred,
-        balance=client_input['Balance'],
-        estimated_salary=client_input['EstimatedSalary'],
-        num_products=client_input['NumOfProducts'],
-        params=current_params
-    )
+    features = transform_data(preprocessor, pd.DataFrame([client]))
+    p_churn = float(predict_proba(model, features)[0])
+    ev = evaluate_retention_strategy(p_churn, client['Balance'], client['EstimatedSalary'],
+                                     client['NumOfProducts'], current_params)
 
     st.markdown("---")
-    st.markdown("#### 🎯 Diagnóstico y Recomendación Comercial")
+    m = st.columns(4)
+    m[0].metric("P(fuga) calibrada", f"{p_churn:.1%}", ev['risk_band'] + " riesgo", delta_color="off")
+    m[1].metric("Margen anual del cliente", f"${ev['client_margin']:,.2f}")
+    m[2].metric("Mejor ganancia neta esperada", f"${ev['best_option_gain']:,.2f}")
+    m[3].metric("Costo del incentivo", f"${ev['incentive_cost']:,.2f}")
 
-    col_res1, col_res2, col_res3, col_res4 = st.columns(4)
-    with col_res1:
-        st.metric(
-            label="Riesgo de Fuga (Red Neuronal)",
-            value=f"{p_churn_pred:.2%}",
-            delta="Alto Riesgo" if p_churn_pred >= 0.65 else ("Estable" if p_churn_pred < 0.30 else "Moderado")
-        )
-    with col_res2:
-        st.metric(
-            label="Margen Anual del Cliente",
-            value=f"${fin_eval['client_margin']:,.2f}",
-            help="Generado por saldos y comisiones transaccionales"
-        )
-    with col_res3:
-        st.metric(
-            label="Ganancia Neta Esperada",
-            value=f"${fin_eval['expected_net_gain']:,.2f}",
-            delta="Rentable" if fin_eval['action_authorized'] else "Bloqueado",
-            delta_color="normal" if fin_eval['action_authorized'] else "inverse"
-        )
-    with col_res4:
-        st.metric(
-            label="Costo del Plan Propuesto",
-            value=f"${fin_eval['incentive_cost']:,.2f}"
-        )
-
-    # Banner de Decisión Operativa
-    if fin_eval['decision'] == 'Retención Prioritaria':
-        st.success(f"**DECISIÓN DEL MOTOR:** {fin_eval['decision']} | **ACCIÓN COMERCIAL:** Asignar {fin_eval['incentive_name']} (Inversión autorizada: ${fin_eval['incentive_cost']:.2f}).")
-    elif fin_eval['decision'] == 'Retención Automatizada':
-        st.info(f"**DECISIÓN DEL MOTOR:** {fin_eval['decision']} | **ACCIÓN COMERCIAL:** Aplicar {fin_eval['incentive_name']} (Inversión autorizada: ${fin_eval['incentive_cost']:.2f}).")
-    elif 'Salida Permitida' in fin_eval['decision']:
-        st.warning(f"**DECISIÓN DEL MOTOR:** {fin_eval['decision']} | **DIRECTRIZ DE JUNTA DIRECTIVA:** Bloquear gasto de retención. El cliente no compensa financieramente el costo del incentivo comercial.")
+    if ev['decision'] in (DECISION_A, DECISION_B):
+        st.success(f"**{ev['segment']} - {ev['decision']}:** aplicar **{ev['incentive_name']}** "
+                   f"(costo ${ev['incentive_cost']:,.2f}, ganancia neta esperada ${ev['expected_net_gain']:,.2f}).")
+    elif ev['decision'] == DECISION_C:
+        reason = ("el cliente es deficitario (margen negativo)" if ev['is_deficit']
+                  else "ningún incentivo genera ganancia neta positiva")
+        st.warning(f"**{ev['segment']} - Salida Permitida:** {reason}. No autorizar gasto de retención.")
     else:
-        st.success(f"**DECISIÓN DEL MOTOR:** {fin_eval['decision']} | **ESTADO:** Cliente con baja probabilidad de deserción. Mantener atención estándar sin incurrir en costos extraordinarios.")
+        st.info(f"**{ev['segment']} - {ev['decision']}:** probabilidad de fuga menor a {stable_thr:.2f}. "
+                "Mantener atención estándar.")
 
-    # Explicabilidad SHAP Local
-    st.markdown("---")
-    st.markdown("##### 🔬 Explicabilidad Local: Factores que Más Influyeron en la Probabilidad")
-    if bg_data is not None and shap_meta.get('feature_names'):
-        f_names = shap_meta['feature_names']
-        # Usar ranking de impacto precalculado para aproximar SHAP local ultrarrápido
-        st.write("Contribución relativa de las variables del cliente al puntaje emitido por el Perceptrón Multicapa:")
-        
-        # Calcular desviación normalizada del cliente respecto a la media
-        feature_impacts = []
-        for feat in shap_meta.get('top_factors', []):
-            fname = feat['feature']
-            val_str = str(client_input.get(fname, 'N/A'))
-            feature_impacts.append({
-                'Variable': fname,
-                'Valor Actual': val_str,
-                'Importancia en Red': f"{feat['importance']:.4f}",
-                'Efecto Observado': 'Mayor susceptibilidad de abandono' if ('Products' in fname and client_input.get('NumOfProducts', 1) >= 3) or ('Age' in fname and client_input.get('Age', 30) > 45) else 'Factor de estabilidad'
-            })
-            
-        st.table(pd.DataFrame(feature_impacts))
+    st.markdown("##### Explicabilidad local (SHAP)")
+    contrib = pd.DataFrame(explain_single_client(explainer, features, shap_meta['feature_names']))
+    contrib['Valor del cliente'] = contrib['feature'].map(lambda f: str(client.get(f, '')))
+    fig = px.bar(contrib.iloc[::-1], x='shap_value', y='feature', orientation='h', color='impact',
+                 color_discrete_map={'Aumenta Riesgo': '#DC2626', 'Disminuye Riesgo': '#10B981'},
+                 hover_data=['Valor del cliente'],
+                 labels={'shap_value': 'Contribución SHAP al logit de fuga', 'feature': ''})
+    fig.update_layout(height=380, margin=dict(t=10, b=10, l=10, r=10))
+    st.plotly_chart(fig, width='stretch')
+    st.caption("Barras rojas empujan el riesgo hacia arriba y verdes hacia abajo, respecto al cliente promedio.")
 
-
-# ====================================================
-# PESTAÑA 3: SIMULADOR DE RENTABILIDAD & ESCENARIOS
-# ====================================================
+# ---------------------------------------------------------------- Tab 3: simulador
 with tab3:
-    st.subheader("Simulador de Sensibilidad de Costos y Rentabilidad Neta de Campañas")
-    st.write("Ajuste los parámetros en la barra lateral izquierda para simular el impacto en los balances rescatados, la inversión y el ROI global de la institución.")
+    st.subheader("Simulador de costos y rentabilidad neta")
+    st.write("Ajuste los parámetros en la barra lateral. La comparación es contra los parámetros por defecto.")
+    _, base = run_analysis(tuple(sorted(dict(DEFAULT_FINANCIAL_PARAMS).items())))
+    s = st.columns(4)
+    s[0].metric("Inversión", money(fin['total_investment']),
+                f"{fin['total_investment'] - base['total_investment']:+,.0f} vs base", delta_color="inverse")
+    s[1].metric("Ganancia neta", money(fin['total_net_gain']),
+                f"{fin['total_net_gain'] - base['total_net_gain']:+,.0f} vs base")
+    s[2].metric("ROI", f"{fin['roi_percent']:.1f}%", f"{fin['roi_percent'] - base['roi_percent']:+.1f} pp vs base")
+    s[3].metric("Clientes intervenidos", f"{fin['num_intervened']:,}",
+                f"{fin['num_intervened'] - base['num_intervened']:+,} vs base")
 
-    # Comparación entre Baseline y Simulación Actual
-    baseline_summary = {
-        'investment': 447680.0,
-        'net_gain': 3074102.81,
-        'roi': 686.67,
-        'rescuable': 484441965.28
-    }
-
-    col_sim1, col_sim2, col_sim3 = st.columns(3)
-    with col_sim1:
-        diff_inv = fin_summary['total_investment'] - baseline_summary['investment']
-        st.metric(
-            label="Inversión Total Simulada",
-            value=f"${fin_summary['total_investment']:,.0f}",
-            delta=f"${diff_inv:+,.0f} vs Baseline",
-            delta_color="inverse"
-        )
-    with col_sim2:
-        diff_gain = fin_summary['total_net_gain'] - baseline_summary['net_gain']
-        st.metric(
-            label="Beneficio Neto Consolidado",
-            value=f"${fin_summary['total_net_gain']:,.0f}",
-            delta=f"${diff_gain:+,.0f} vs Baseline"
-        )
-    with col_sim3:
-        diff_roi = fin_summary['roi_percent'] - baseline_summary['roi']
-        st.metric(
-            label="Retorno Sobre Inversión (ROI)",
-            value=f"{fin_summary['roi_percent']:.1f}%",
-            delta=f"{diff_roi:+.1f}% vs Baseline"
-        )
-
-    st.markdown("---")
-    st.markdown("##### Proyección de Rentabilidad Neta por Nivel de Inversión")
-    
-    # Curva de sensibilidad
-    test_multipliers = np.linspace(0.5, 1.8, 14)
-    curve_data = []
-    for mult in test_multipliers:
-        temp_p = current_params.copy()
-        temp_p['cost_vip'] = current_params['cost_vip'] * mult
-        temp_p['cost_auto'] = current_params['cost_auto'] * mult
-        _, temp_sum = analyze_portfolio(df_portfolio, full_probs, temp_p)
-        curve_data.append({
-            'Multiplicador de Costo': f"{mult:.1f}x",
-            'Inversión Total ($)': temp_sum['total_investment'],
-            'Beneficio Neto ($)': temp_sum['total_net_gain'],
-            'ROI (%)': temp_sum['roi_percent']
-        })
-
-    df_curve = pd.DataFrame(curve_data)
-    fig_sens = px.line(
-        df_curve,
-        x='Inversión Total ($)',
-        y='Beneficio Neto ($)',
-        text='ROI (%)',
-        markers=True,
-        title="Curva de Retorno: Beneficio Neto vs Presupuesto Asignado"
-    )
-    fig_sens.update_traces(textposition="top right")
-    fig_sens.update_layout(height=400)
-    st.plotly_chart(fig_sens, use_container_width=True)
-
-    st.info(
-        "💡 **Conclusión Estratégica del Simulador:** Gracias al filtro de rentabilidad neta (`Ganancia Neta Esperada > 0`), "
-        "incluso cuando los costos unitarios de los incentivos aumentan, el sistema bloquea automáticamente las cuentas que dejan de ser viables, "
-        "preservando siempre márgenes netos positivos para la entidad bancaria."
-    )
-
+    st.markdown("##### Curva de retorno al escalar el costo de los incentivos")
+    rows = []
+    for mult in np.linspace(0.5, 2.0, 16):
+        p = dict(current_params, cost_vip=current_params['cost_vip'] * mult,
+                 cost_auto=current_params['cost_auto'] * mult)
+        _, summ = run_analysis(tuple(sorted(p.items())))
+        rows.append({'Multiplicador': f"{mult:.1f}x", 'Inversión ($)': summ['total_investment'],
+                     'Ganancia neta ($)': summ['total_net_gain'], 'ROI': f"{summ['roi_percent']:.0f}%",
+                     'Intervenidos': summ['num_intervened']})
+    curve = pd.DataFrame(rows)
+    fig = px.line(curve, x='Inversión ($)', y='Ganancia neta ($)', text='ROI', markers=True,
+                  hover_data=['Multiplicador', 'Intervenidos'])
+    fig.update_traces(textposition='top center')
+    fig.update_layout(height=420)
+    st.plotly_chart(fig, width='stretch')
+    st.info("Al subir el costo de los incentivos, el filtro de Ganancia Neta Esperada > 0 deja fuera a los "
+            "clientes que dejan de compensar: la inversión cae y la ganancia neta se mantiene positiva.")

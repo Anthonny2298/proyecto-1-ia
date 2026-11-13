@@ -1,163 +1,166 @@
 """
-Pipeline de Entrenamiento y Evaluación de Deep Retention.
-Ejecuta el flujo completo de:
-1. Carga de datos y partición estratificada.
-2. Preprocesamiento (Escalado y OHE) sin fuga.
-3. Entrenamiento de Red Neuronal MLP con Early Stopping y balanceo.
-4. Evaluación rigurosa (ROC-AUC, PR-AUC, Brier/Calibración).
-5. Interpretabilidad SHAP (Factores globales de deserción).
-6. Análisis de Cartera Financiera y cálculo de ROI.
-7. Exportación de artefactos para el canal de inferencia.
+Pipeline de Entrenamiento y Evaluacion de Deep Retention.
+1. Carga de datos y particion estratificada (70/15/15).
+2. Preprocesamiento (StandardScaler + OneHotEncoder) ajustado solo en Train.
+3. Entrenamiento del MLP con pos_weight y Early Stopping (semilla fija).
+4. Calibracion Platt en validacion y evaluacion en Test (antes y despues de calibrar).
+5. Analisis financiero de la cartera completa y del holdout de Test.
+6. Explicabilidad SHAP global.
+7. Exportacion de artefactos y figuras para la app y el informe.
+
+Uso:
+    python train.py
 """
 
 import os
 import sys
 import json
+import argparse
+
 import joblib
 import numpy as np
-import pandas as pd
-import torch
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from sklearn.calibration import calibration_curve
 
-# Asegurar importación de módulos locales en src
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(BASE_DIR, 'src'))
 
-from preprocessing import (
-    load_raw_data,
-    split_data,
-    build_and_fit_preprocessor,
-    transform_data,
-    get_feature_names,
-    DROP_COLUMNS,
-    TARGET_COLUMN
+from preprocessing import (  # noqa: E402
+    DATA_FILENAME, load_raw_data, split_data, build_and_fit_preprocessor,
+    transform_data, get_feature_names,
 )
-from model import (
-    DeepRetentionMLP,
-    train_model,
-    evaluate_model,
-    save_trained_model
+from model import (  # noqa: E402
+    DEFAULT_SEED, set_seed, train_model, calibrate_model, evaluate_model,
+    predict_proba, save_trained_model,
 )
-from financial_logic import analyze_portfolio, DEFAULT_FINANCIAL_PARAMS
-from explainability import get_feature_importance_ranking
+from financial_logic import analyze_portfolio, DEFAULT_FINANCIAL_PARAMS  # noqa: E402
+from explainability import build_explainer, global_importance  # noqa: E402
 
 
-def run_pipeline():
-    print("="*70)
-    print("INICIANDO PIPELINE DE ENTRENAMIENTO - SISTEMA DEEP RETENTION")
-    print("="*70)
+def _save_json(obj, path):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, indent=4)
 
-    base_dir = os.path.dirname(__file__)
-    data_path = os.path.join(base_dir, 'data', 'Churn_Modelling.csv')
-    models_dir = os.path.join(base_dir, 'models')
-    os.makedirs(models_dir, exist_ok=True)
 
-    # 1. Carga de Datos
-    print(f"\n[1/6] Cargando datos desde {data_path}...")
+def _plot_training(history, path):
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    epochs = range(1, len(history['train_loss']) + 1)
+    ax.plot(epochs, history['train_loss'], label='Train loss')
+    ax.plot(epochs, history['val_loss'], label='Val loss')
+    ax.axvline(history['best_epoch'], color='gray', linestyle='--', label=f"Mejor epoca ({history['best_epoch']})")
+    ax.set_xlabel('Epoca'); ax.set_ylabel('BCE ponderada'); ax.set_title('Curva de entrenamiento')
+    ax.legend(); fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
+
+
+def _plot_calibration(y, probs_raw, probs_cal, path):
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
+    for label, probs in (('Sin calibrar', probs_raw), ('Calibrada (Platt)', probs_cal)):
+        frac, mean = calibration_curve(y, probs, n_bins=10, strategy='quantile')
+        ax.plot(mean, frac, 'o-', label=label)
+    ax.plot([0, 1], [0, 1], 'k--', label='Perfecta')
+    ax.set_xlabel('Probabilidad predicha'); ax.set_ylabel('Fuga observada')
+    ax.set_title('Calibracion en Test'); ax.legend(); fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
+
+
+def _plot_importance(importance, path):
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    importance.sort_values().plot.barh(ax=ax, color='#2563EB')
+    ax.set_xlabel('Media |SHAP| (logit de fuga)'); ax.set_title('Factores determinantes de abandono')
+    fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
+
+
+def run_pipeline(data_path=None, models_dir=None, data_out_dir=None, figures_dir=None,
+                 epochs=120, patience=14, seed=DEFAULT_SEED, shap_samples=500, verbose=True):
+    data_path = data_path or os.path.join(BASE_DIR, 'data', DATA_FILENAME)
+    models_dir = models_dir or os.path.join(BASE_DIR, 'models')
+    data_out_dir = data_out_dir or os.path.join(BASE_DIR, 'data')
+    figures_dir = figures_dir or os.path.join(BASE_DIR, 'docs', 'figures')
+    for d in (models_dir, data_out_dir, figures_dir):
+        os.makedirs(d, exist_ok=True)
+    set_seed(seed)
+
+    print(f"[1/7] Cargando datos desde {data_path}")
     df = load_raw_data(data_path)
-    print(f"Total registros cargados: {len(df):,} clientes.")
+    print(f"Registros: {len(df):,} | Tasa de fuga: {df['Exited'].mean():.4f}")
 
-    # 2. Partición Estratificada
-    print("\n[2/6] Realizando partición estratificada (70% Train, 15% Val, 15% Test)...")
-    (X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(df, test_size=0.15, val_size=0.15, random_state=42)
+    print("[2/7] Particion estratificada 70/15/15")
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(df, 0.15, 0.15, random_state=seed)
     print(f"Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
 
-    # 3. Preprocesamiento (Ajustado únicamente en Train)
-    print("\n[3/6] Ajustando transformaciones (StandardScaler + OneHotEncoder)...")
-    preproc_path = os.path.join(models_dir, 'preprocessor.joblib')
-    preprocessor = build_and_fit_preprocessor(X_train, save_path=preproc_path)
+    print("[3/7] Ajustando StandardScaler + OneHotEncoder (solo Train)")
+    preprocessor = build_and_fit_preprocessor(X_train, save_path=os.path.join(models_dir, 'preprocessor.joblib'))
     feature_names = get_feature_names(preprocessor)
-    print(f"Total variables de entrada generadas: {len(feature_names)}")
-    print(f"Variables: {feature_names}")
+    X_train_p, X_val_p, X_test_p = (transform_data(preprocessor, X) for X in (X_train, X_val, X_test))
+    print(f"Variables de entrada ({len(feature_names)}): {feature_names}")
 
-    X_train_proc = transform_data(preprocessor, X_train)
-    X_val_proc = transform_data(preprocessor, X_val)
-    X_test_proc = transform_data(preprocessor, X_test)
+    print("[4/7] Entrenando MLP")
+    model, history = train_model(X_train_p, y_train, X_val_p, y_val, epochs=epochs,
+                                 patience=patience, seed=seed, verbose=verbose)
 
-    # 4. Entrenamiento de la Red Neuronal
-    print("\n[4/6] Entrenando Perceptrón Multicapa (MLP) con regularización y Early Stopping...")
-    model, history = train_model(
-        X_train_proc, y_train,
-        X_val_proc, y_val,
-        epochs=120,
-        batch_size=64,
-        lr=0.001,
-        patience=14
-    )
+    print("[5/7] Calibrando (Platt en Val) y evaluando en Test")
+    raw_metrics, test_probs_raw = evaluate_model(model, X_test_p, y_test, calibrated=False)
+    calibration = calibrate_model(model, X_val_p, y_val)
+    cal_metrics, test_probs = evaluate_model(model, X_test_p, y_test, calibrated=True)
+    for name in ('roc_auc', 'pr_auc', 'brier_score', 'ece', 'mean_predicted'):
+        print(f"  {name:15s} sin calibrar: {raw_metrics[name]:.4f} | calibrada: {cal_metrics[name]:.4f}")
 
-    # Evaluación en Test Set
-    print("\n[5/6] Evaluando métricas diagnósticas en conjunto de Test...")
-    test_metrics, test_probs = evaluate_model(model, X_test_proc, y_test)
-    print("\n--- RESULTADOS DIAGNÓSTICOS EN TEST SET ---")
-    for k, v in test_metrics.items():
-        print(f"  {k.upper()}: {v:.4f}")
-
-    # Guardar modelo entrenado y métricas
-    model_path = os.path.join(models_dir, 'deep_retention_mlp.pt')
-    metrics_path = os.path.join(models_dir, 'test_metrics.json')
-    save_trained_model(
-        model=model,
-        input_dim=len(feature_names),
-        save_path=model_path,
-        metrics=test_metrics,
-        metrics_path=metrics_path
-    )
-
-    # Inferencia en el dataset completo para consolidación financiera
-    print("\n[6/6] Ejecutando inferencia completa y análisis de rentabilidad financiera...")
-    X_full = df.drop(columns=DROP_COLUMNS + [TARGET_COLUMN], errors='ignore')
-    X_full_proc = transform_data(preprocessor, X_full)
-    
-    with torch.no_grad():
-        t_full = torch.tensor(X_full_proc, dtype=torch.float32)
-        full_probs = model.predict_proba(t_full).cpu().numpy().flatten()
-
-    df_analyzed, financial_summary = analyze_portfolio(df, full_probs)
-
-    print("\n--- RESUMEN FINANCIERO Y DE IMPACTO (CARTERA TOTAL) ---")
-    print(f"  Clientes Totales Analizados: {financial_summary['total_clients']:,}")
-    print(f"  Capital en Riesgo Crítico: ${financial_summary['total_balance_at_risk']:,.2f}")
-    print(f"  Capital Rescatable Estimado: ${financial_summary['rescuable_balance']:,.2f}")
-    print(f"  Inversión Total en Retención: ${financial_summary['total_investment']:,.2f}")
-    print(f"  Beneficio Neto Esperado: ${financial_summary['total_net_gain']:,.2f}")
-    print(f"  Retorno Sobre la Inversión (ROI): {financial_summary['roi_percent']:.2f}%")
-    print(f"  Clientes Intervenidos Rentablemente: {financial_summary['num_intervened']:,}")
-    print(f"  Clientes con Salida Permitida (Filtro Margen/Deficitarios): {financial_summary['num_allowed_exit']:,}")
-    print(f"  Clientes Estables: {financial_summary['num_stable']:,}")
-
-    # Guardar resumen financiero y dataset enriquecido
-    fin_summary_path = os.path.join(models_dir, 'financial_summary.json')
-    with open(fin_summary_path, 'w', encoding='utf-8') as f:
-        json.dump(financial_summary, f, indent=4)
-
-    scored_data_path = os.path.join(base_dir, 'data', 'portfolio_scored.csv')
-    df_analyzed.to_csv(scored_data_path, index=False)
-    print(f"Dataset consolidado guardado en: {scored_data_path}")
-
-    # Análisis SHAP de Explicabilidad Global
-    print("\n[EXTRA] Calculando factores determinantes de abandono con SHAP...")
-    bg_samples = X_train_proc[:100]
-    ranking, explainer = get_feature_importance_ranking(model, bg_samples, feature_names, n_background=70, n_samples=100)
-    
-    top_factors = ranking[:5]
-    print("\nTop Factores Determinantes de Fuga según SHAP:")
-    for rank_idx, (feat, score) in enumerate(top_factors, 1):
-        print(f"  {rank_idx}. {feat}: impacto medio |SHAP| = {score:.4f}")
-
-    shap_summary = {
-        'feature_names': feature_names,
-        'ranking': [{'feature': f, 'importance': float(s)} for f, s in ranking],
-        'top_factors': [{'rank': i+1, 'feature': f, 'importance': float(s)} for i, (f, s) in enumerate(top_factors)]
+    metrics = {
+        **cal_metrics,
+        'uncalibrated': raw_metrics,
+        'calibration': calibration,
+        'best_epoch': history['best_epoch'],
+        'epochs_run': len(history['val_loss']),
+        'seed': seed,
+        'n_train': len(X_train), 'n_val': len(X_val), 'n_test': len(X_test),
     }
-    with open(os.path.join(models_dir, 'shap_summary.json'), 'w', encoding='utf-8') as f:
-        json.dump(shap_summary, f, indent=4)
+    save_trained_model(model, len(feature_names), os.path.join(models_dir, 'deep_retention_mlp.pt'),
+                       metrics, os.path.join(models_dir, 'test_metrics.json'))
+    _save_json(history, os.path.join(models_dir, 'training_history.json'))
 
-    # Guardar background data para explicabilidad interactiva local en la app
-    joblib.dump(bg_samples, os.path.join(models_dir, 'shap_background.joblib'))
+    print("[6/7] Analisis financiero (cartera completa y holdout de Test)")
+    full_probs = predict_proba(model, transform_data(preprocessor, df))
+    df_scored, portfolio_summary = analyze_portfolio(df, full_probs)
+    _, test_summary = analyze_portfolio(df.loc[X_test.index], test_probs)
+    _save_json({'portfolio': portfolio_summary, 'test_holdout': test_summary,
+                'params': dict(DEFAULT_FINANCIAL_PARAMS)},
+               os.path.join(models_dir, 'financial_summary.json'))
+    df_scored.to_csv(os.path.join(data_out_dir, 'portfolio_scored.csv'), index=False)
+    for k, v in portfolio_summary.items():
+        print(f"  {k:28s} {v:,.2f}" if isinstance(v, float) else f"  {k:28s} {v:,}")
 
-    print("\n" + "="*70)
-    print("PIPELINE COMPLETADO CON ÉXITO. TODOS LOS ARTEFACTOS GENERADOS.")
-    print("="*70)
+    print("[7/7] SHAP global (GradientExplainer)")
+    rng = np.random.RandomState(seed)
+    background = X_train_p[rng.choice(len(X_train_p), min(200, len(X_train_p)), replace=False)]
+    explainer = build_explainer(model, background)
+    importance = global_importance(explainer, X_test_p[:shap_samples], feature_names)
+    _save_json({
+        'feature_names': feature_names,
+        'ranking': [{'feature': f, 'importance': float(v)} for f, v in importance.items()],
+        'n_samples': int(min(shap_samples, len(X_test_p))),
+    }, os.path.join(models_dir, 'shap_summary.json'))
+    joblib.dump(background, os.path.join(models_dir, 'shap_background.joblib'))
+    for rank, (feat, val) in enumerate(importance.head(5).items(), 1):
+        print(f"  {rank}. {feat}: media |SHAP| = {val:.4f}")
+
+    _plot_training(history, os.path.join(figures_dir, 'training_curve.png'))
+    _plot_calibration(y_test, test_probs_raw, test_probs, os.path.join(figures_dir, 'calibration_curve.png'))
+    _plot_importance(importance, os.path.join(figures_dir, 'shap_importance.png'))
+
+    print("PIPELINE COMPLETADO.")
+    return {'metrics': metrics, 'portfolio': portfolio_summary, 'test_holdout': test_summary,
+            'importance': importance.to_dict()}
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Entrena el modelo Deep Retention.')
+    parser.add_argument('--data', default=None, help='Ruta al CSV (por defecto data/Customer-Churn-Records.csv)')
+    parser.add_argument('--epochs', type=int, default=120)
+    parser.add_argument('--seed', type=int, default=DEFAULT_SEED)
+    args = parser.parse_args()
+    run_pipeline(data_path=args.data, epochs=args.epochs, seed=args.seed)
 
 
 if __name__ == '__main__':
-    run_pipeline()
-
+    main()
