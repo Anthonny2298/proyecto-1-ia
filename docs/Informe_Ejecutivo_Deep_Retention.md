@@ -4,6 +4,8 @@
 
 La retención indiscriminada destruye margen. Deep Retention combina una red neuronal que estima la probabilidad de fuga de cada cliente con una regla financiera que solo autoriza un incentivo cuando la ganancia neta esperada para el banco es positiva. Todas las cifras de este informe se reproducen ejecutando `python train.py` (semilla fija) sobre el dataset entregado (10.000 clientes).
 
+**Nota de reproducibilidad:** con la semilla fija, cada entorno produce siempre el mismo resultado. Entre entornos distintos (por ejemplo Windows con Python 3.12 frente a Google Colab con Python 3.13) las librerías numéricas redondean distinto y las cifras pueden variar ligeramente: en Colab se obtuvo ROC-AUC 0,8674 (aquí 0,8669) y ROI en Test de 425,5% (aquí 426,9%). La variación es menor a 0,5% y no cambia ninguna conclusión. Las cifras de este informe corresponden a los artefactos publicados en el repositorio.
+
 ---
 
 ## 1. Resumen de Impacto Financiero y Retorno

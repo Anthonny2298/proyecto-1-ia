@@ -33,6 +33,8 @@ Motor predictivo con redes neuronales que estima la probabilidad de fuga de cada
 
 Factores principales de abandono (SHAP): número de productos, edad y actividad del cliente.
 
+> **Nota de reproducibilidad:** con la semilla fija, cada entorno produce siempre el mismo resultado. Entre entornos distintos (por ejemplo Windows con Python 3.12 frente a Google Colab con Python 3.13) las librerías numéricas de bajo nivel redondean distinto y las cifras pueden variar ligeramente (menos de 0,5%; en Colab se obtuvo ROC-AUC 0,8674 y ROI en Test de 425,5%). Las conclusiones no cambian. Las cifras publicadas corresponden a los artefactos incluidos en `models/`.
+
 ## 🧠 Solución
 
 1. **Datos:** `data/Customer-Churn-Records.csv`. Partición estratificada 70/15/15. `Complain` se excluye por fuga de información (coincide con el abandono en el 99,86% de los casos).
