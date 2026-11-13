@@ -7,3 +7,5 @@ venv/
 .vscode/
 .idea/
 
+.pytest_cache/
+models_orig/

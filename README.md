@@ -1,188 +1,112 @@
-# Sistema Deep Retention: Retención Selectiva y Rentable de Clientes Bancarios
+# Deep Retention: Retención Selectiva y Rentable de Clientes Bancarios
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/Framework-PyTorch-EE4C2C.svg)](https://pytorch.org/)
-[![Streamlit](https://img.shields.io/badge/App-Streamlit-FF4B4B.svg)](https://streamlit.io/)
 [![Informe Ejecutivo PDF](https://img.shields.io/badge/Informe%20Ejecutivo-PDF-success.svg)](docs/Informe_Ejecutivo_Deep_Retention.pdf)
+[![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jose30a/proyecto-1-ia/blob/main/notebooks/Deep_Retention_Colab.ipynb)
+![Python 3.13](https://img.shields.io/badge/Python-3.13-blue.svg)
+![PyTorch](https://img.shields.io/badge/Framework-PyTorch-EE4C2C.svg)
+![Streamlit](https://img.shields.io/badge/App-Streamlit-FF4B4B.svg)
 
-> **Dirección de Estrategia y Rentabilidad de Clientes | Entidad Bancaria**  
-> Solución predictiva con Redes Neuronales y optimización matemática para erradicar la retención comercial indiscriminada, bloqueando el gasto en clientes deficitarios (**"Salida Permitida"**) y maximizando el retorno neto sobre el capital en riesgo.
+Motor predictivo con redes neuronales que estima la probabilidad de fuga de cada cliente y solo autoriza un incentivo de retención cuando la **ganancia neta esperada para el banco es positiva**. Los clientes que no compensan el costo del incentivo quedan en **"Salida Permitida"**.
 
----
+## 📄 Informe ejecutivo
 
-## 📄 Enlace al Informe Ejecutivo Oficial
-El informe formal para la Junta Directiva y Dirección General se encuentra disponible en formato PDF en el repositorio:
-👉 **[Ver Informe Ejecutivo en PDF](docs/Informe_Ejecutivo_Deep_Retention.pdf)** *(Versión Markdown editable disponible en [docs/Informe_Ejecutivo_Deep_Retention.md](docs/Informe_Ejecutivo_Deep_Retention.md))*.
+👉 **[Informe Ejecutivo en PDF](docs/Informe_Ejecutivo_Deep_Retention.pdf)** (fuente editable: [Markdown](docs/Informe_Ejecutivo_Deep_Retention.md)).
 
----
+## 🎯 Resultados
 
-## 🎯 Resumen de Impacto Financiero
+| Indicador | Cartera completa | Test (clientes no vistos) |
+|---|---|---|
+| Clientes analizados | 10.000 | 1.500 |
+| Capital en riesgo (P(fuga) >= 0,30) | $195,4M | $31,2M |
+| Capital esperado a retener | $55,1M | $8,8M |
+| Inversión en retención | $320.660 | $50.220 |
+| Ganancia neta esperada | $1,34M | $214.411 |
+| **ROI** | **417,3%** | **426,9%** |
+| Intervenidos / Salida Permitida / Estables | 1.877 / 313 / 7.810 | 291 / 49 / 1.160 |
 
-| Métrica Consolidada | Resultado | Significado para la Entidad Bancaria |
-| :--- | :---: | :--- |
-| **Volumen de Clientes Evaluados** | **10,000** | 100% de la cartera analizada individualmente |
-| **Capital en Riesgo Crítico ($P \ge 0.65$)** | **$193,608,308.52** | Saldos amenazados por deserción inminente |
-| **Capital Rescatable Estimado** | **$484,441,965.28** | Depósitos pertenecientes a cuentas rentables intervenidas |
-| **Inversión Total en Retención** | **$447,680.00** | Presupuesto comercial estrictamente asignado |
-| **Beneficio Neto Esperado** | **+$3,074,102.81** | Retorno monetario neto tras deducir costos |
-| **Retorno de Inversión (ROI)** | **686.67%** | Por cada \$1.00 invertido, el banco recupera \$6.87 netos |
-| **Ahorro por "Salida Permitida"** | **1,139 clientes** | Gasto bloqueado en cuentas no rentables ($>\$68k - \$227k ahorrados) |
+| Métrica (Test) | Valor |
+|---|---|
+| ROC-AUC | 0,8669 |
+| PR-AUC (línea base 0,204) | 0,7039 |
+| Brier score (calibrado) | 0,1019 |
+| ECE, error de calibración (sin calibrar: 0,204) | 0,0226 |
 
----
+Factores principales de abandono (SHAP): número de productos, edad y actividad del cliente.
 
-## 🧠 Arquitectura de la Solución Predictiva
+## 🧠 Solución
 
-El motor se fundamenta en un **Perceptrón Multicapa Profundo (MLP)** desarrollado en PyTorch con preparación estricta para datos tabulares bancarios:
+1. **Datos:** `data/Customer-Churn-Records.csv`. Partición estratificada 70/15/15. `Complain` se excluye por fuga de información (coincide con el abandono en el 99,86% de los casos).
+2. **Preprocesamiento:** `StandardScaler` (8 numéricas) y `OneHotEncoder` (país, género), ajustados solo con entrenamiento.
+3. **Red neuronal (PyTorch):** 128 (BatchNorm, ReLU, Dropout 0,25) -> 64 (ReLU, Dropout 0,15) -> 1 (sigmoide). `BCEWithLogitsLoss` con `pos_weight`, Adam y Early Stopping (paciencia 14).
+4. **Calibración:** Platt scaling en validación, guardado dentro del modelo, para que la probabilidad sea usable en la fórmula financiera.
+5. **Regla financiera:**
 
-1. **Preprocesamiento sin Fuga de Datos (*Data Leakage*):**
-   * Escalado estandarizado (`StandardScaler`) ajustado exclusivamente sobre el conjunto de entrenamiento para las 8 variables continuas (`CreditScore`, `Age`, `Tenure`, `Balance`, `NumOfProducts`, `HasCrCard`, `IsActiveMember`, `EstimatedSalary`).
-   * Codificación categórica (`OneHotEncoder`) para `Geography` y `Gender`.
-   * Partición estratificada: 70% Entrenamiento, 15% Validación, 15% Test.
+   `Ganancia Neta Esperada = P(fuga) x Efectividad x Margen del cliente - Costo del incentivo`
 
-2. **Topología de la Red Neuronal:**
-   * **Capa 1:** Densa (128 neuronas, ReLU) + `BatchNorm1d` + `Dropout(0.25)`.
-   * **Capa 2:** Densa (64 neuronas, ReLU) + `Dropout(0.15)`.
-   * **Capa de Salida:** 1 neurona con activación Sigmoide continua $P(\text{fuga}) \in [0.00, 1.00]$.
-   * **Tratamiento del Desbalance:** Función de pérdida `BCEWithLogitsLoss` ponderada con `pos_weight = 3.91`.
-   * **Regularización y Early Stopping:** Detención tras 14 épocas consecutivas sin mejora en `val_loss`, convergiendo óptimamente en la época 38.
+   Se evalúa cada incentivo elegible (Gestor VIP para saldo >= $80k, Bonificación Transaccional para todos), se elige el de mayor ganancia y solo se ejecuta si es > 0. El margen descuenta un costo de servicio, así que un cliente puede ser deficitario.
+6. **Explicabilidad:** SHAP (`GradientExplainer`) global y por cliente.
 
-3. **Diagnóstico Técnico en Test Set:**
-   * **ROC-AUC:** **0.8604**
-   * **PR-AUC:** **0.6923** (vs. línea base de 0.2037)
-   * **Sensibilidad / Recall en Fuga:** **79.74%**
-   * **Calibración (Brier Score):** **0.1536**
+| Segmento | Condición | Decisión | Incentivo |
+|---|---|---|---|
+| A: Alto Valor | Ganancia > 0 con Gestor VIP | Retención Prioritaria | Gestor VIP y Tarifa Plana ($200) |
+| B: Valor Medio | Ganancia > 0 con Bonificación | Retención Automatizada | Bonificación Transaccional ($60) |
+| C: No Rentable | Ningún incentivo con ganancia > 0 | Salida Permitida | Ninguno |
+| D: Estable | P(fuga) < 0,30 | Sin Acción Requerida | Mantenimiento ordinario |
 
-4. **Explicabilidad con SHAP:**
-   * **Factor #1:** Número de Productos (`NumOfProducts`) — clientes con $\ge 3$ productos desertan por saturación y costos.
-   * **Factor #2:** Edad (`Age`) — mayor sensibilidad y fuga en el segmento de 45 a 65 años.
-   * **Factor #3:** Membresía Activa (`IsActiveMember`) — la inactividad transaccional es la antesala del abandono.
+Supuestos financieros y detalle de cambios: [docs/CAMBIOS_AUDITORIA.md](docs/CAMBIOS_AUDITORIA.md).
 
----
+## 🖥️ Aplicación (Streamlit)
 
-## 💰 Motor de Decisión Financiera y Catálogo Comercial
+* **Panel de Cartera:** capital en riesgo, capital a intervenir, inversión, ganancia neta, ROI, matriz de decisión y explorador de clientes.
+* **Buscador por Cliente:** probabilidad calibrada, margen, ganancia neta esperada, decisión y gráfico SHAP del cliente. Acepta clientes existentes o perfiles nuevos.
+* **Simulador de Parámetros:** costos, efectividades, márgenes, costo de servicio y umbrales; compara contra los valores por defecto y muestra la curva inversión vs ganancia.
 
-En cumplimiento estricto del mandato de rentabilidad, el sistema sustituye los umbrales arbitrarios de clasificación por la **Ecuación de Rentabilidad Neta**:
+## 🚀 Ejecución
 
-$$\text{Ganancia Neta Esperada} = (P(\text{fuga}) \times \text{Efectividad del Incentivo} \times \text{Margen del Cliente}) - \text{Costo del Incentivo}$$
+### Google Colab (recomendado)
 
-**Regla de Oro:** La acción comercial **solo se autoriza si $\text{Ganancia Neta Esperada} > 0$**.
+Abra [`notebooks/Deep_Retention_Colab.ipynb`](notebooks/Deep_Retention_Colab.ipynb) con el botón **Abrir en Colab** y ejecute todo. El notebook instala dependencias, corre los tests, entrena, muestra métricas y figuras y levanta la app con un link público temporal.
 
-```mermaid
-flowchart TD
-    A[Cliente Evaluado por Red Neuronal] --> B{Probabilidad de Fuga}
-    B -->|P < 0.30| D[Segmento D: Estable\nSin Acción / Costo $0]
-    B -->|P >= 0.30| C{Saldo Patrimonial}
-    C -->|Saldo < $30k| E[Segmento C: No Rentable\nSalida Permitida\nCosto $0 - Ahorro Operativo]
-    C -->|Saldo >= $80k y P >= 0.65| F{Ganancia Neta > 0?}
-    C -->|Saldo $30k - $80k| G{Ganancia Neta > 0?}
-    F -->|Sí| H[Segmento A: Alto Valor\nRetención Prioritaria\nGestor VIP y Tarifa Plana]
-    F -->|No| E
-    G -->|Sí| I[Segmento B: Medio / Moderado\nRetención Automatizada\nBono Transaccional]
-    G -->|No| E
-```
+### Local
 
-### Matriz de Segmentación
-* **Segmento A (Alto Valor / Alto Riesgo):** 1,474 clientes | Retención Prioritaria (Gestor VIP) | Inversión: \$294.8k | Margen Neto: **+\$1.98M**.
-* **Segmento B (Medio / Riesgo Moderado):** 2,548 clientes | Retención Automatizada (Bono Transaccional) | Inversión: \$152.9k | Margen Neto: **+\$1.10M**.
-* **Segmento C (No Rentable):** 1,139 clientes | **Salida Permitida** | Inversión: **\$0.00** | Retención bloqueada por saldo deficitario.
-* **Segmento D (Estable):** 4,839 clientes | Sin Acción Requerida | Inversión: **\$0.00** | Mantenimiento estándar.
-
----
-
-## 🖥️ Aplicación Interactiva Integral (Streamlit)
-
-La herramienta gráfica para ejecutivos y gerencia consta de 3 módulos operativos:
-1. **Buscador y Diagnóstico Individual por Cliente:** Consulta instantánea por `CustomerId` o simulación manual de perfiles con visualización del puntaje de la red, impacto monetario proyectado, decisión comercial autorizada y desglose local de factores SHAP.
-2. **Panel de Cartera (Dashboard):** KPIs en tiempo real del capital en riesgo, depósitos rescatables, efectividad esperada, gráficos de dispersión interactivos y tabla exportable filtrable por segmento.
-3. **Simulador de Parámetros & Escenarios:** Ajuste dinámico de costos de incentivos, efectividad asumida, umbrales de balance y recálculo automático de la curva de retorno y ROI proyectado.
-
----
-
-## 🚀 Instrucciones de Instalación y Ejecución
-
-### 1. Clonar el Repositorio y Preparar Entorno
 ```bash
-git clone <URL_DEL_REPOSITORIO>
-cd "Proyecto 1"
-
-# Crear entorno virtual
+git clone https://github.com/jose30a/proyecto-1-ia.git
+cd proyecto-1-ia
 python -m venv venv
-
-# Activar en Windows
-venv\Scripts\activate
-
-# Activar en Linux/macOS
-# source venv/bin/activate
-
-# Instalar dependencias requeridas
+venv\Scripts\activate          # Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
+python -m pytest -q tests       # tests unitarios + integración
+python train.py                 # reentrena (reproducible, semilla 42)
+streamlit run app/app.py        # abre http://localhost:8501
+python docs/generate_pdf.py     # regenera el PDF desde el Markdown
 ```
 
-### 2. Re-entrenar el Pipeline Completo (Opcional)
-El repositorio ya incluye los pesos entrenados del modelo y los transformadores en `models/`. Si desea reejecutar el pipeline de punta a punta:
-```bash
-python train.py
-```
+El repositorio ya incluye el modelo entrenado, así que la app funciona sin reentrenar.
 
-### 3. Ejecutar la Aplicación Interactiva
-```bash
-streamlit run app/app.py
-```
-La aplicación se abrirá automáticamente en su navegador en `http://localhost:8501`.
-
-### 4. Regenerar el Informe Ejecutivo en PDF (Opcional)
-```bash
-python docs/generate_pdf.py
-```
-
----
-
-## 📂 Estructura del Proyecto
+## 📂 Estructura
 
 ```text
-Proyecto 1/
-│
-├── app/
-│   └── app.py                     # Aplicación interactiva Streamlit (3 módulos)
-│
-├── data/
-│   ├── Churn_Modelling.csv        # Dataset original de 10,000 clientes
-│   └── portfolio_scored.csv       # Dataset enriquecido con predicciones y decisiones
-│
-├── docs/
-│   ├── Informe_Ejecutivo_Deep_Retention.md   # Informe gerencial completo en Markdown
-│   ├── Informe_Ejecutivo_Deep_Retention.pdf  # Informe oficial para Junta Directiva (PDF)
-│   └── generate_pdf.py                       # Script generador con ReportLab
-│
-├── models/
-│   ├── deep_retention_mlp.pt      # Pesos serializados de la Red Neuronal (PyTorch)
-│   ├── preprocessor.joblib        # Pipeline ajustado (StandardScaler + OneHotEncoder)
-│   ├── test_metrics.json          # Métricas de validación independiente (ROC-AUC, PR-AUC)
-│   ├── financial_summary.json     # Métricas financieras consolidadas (ROI, capital rescatado)
-│   ├── shap_summary.json          # Ranking global de factores explicativos
-│   └── shap_background.joblib     # Matriz de fondo para explicabilidad SHAP local
-│
-├── src/
-│   ├── preprocessing.py           # Pipeline de limpieza y transformación anti-leakage
-│   ├── model.py                   # Arquitectura DeepRetentionMLP, EarlyStopping y métricas
-│   ├── financial_logic.py         # Ecuación de Ganancia Neta y reglas de negocio
-│   └── explainability.py          # Explicabilidad global y local con SHAP
-│
-├── Enunciado.txt                  # Requerimientos y rúbrica oficial de la evaluación
-├── requirements.txt               # Lista fijada de dependencias del proyecto
-├── train.py                       # Script modular de entrenamiento de punta a punta
-└── README.md                      # Documentación integral del repositorio
+app/app.py                       Aplicación Streamlit (panel, buscador, simulador)
+data/Customer-Churn-Records.csv  Dataset del proyecto
+data/portfolio_scored.csv        Cartera con probabilidades y decisiones
+docs/                            Informe (MD + PDF), figuras, generador del PDF, spec de cambios
+models/                          Pesos del MLP (con calibración), preprocesador, métricas y SHAP
+notebooks/                       Notebook de ejecución en Google Colab
+src/preprocessing.py             Carga, partición y transformaciones sin fuga
+src/model.py                     MLP, entrenamiento, calibración y métricas
+src/financial_logic.py           Ganancia neta esperada, segmentación y KPIs
+src/explainability.py            SHAP global y local
+tests/                           Tests unitarios y de integración (pytest)
+train.py                         Pipeline de entrenamiento de punta a punta
+requirements.txt                 Dependencias con versiones fijadas (Colab)
 ```
 
----
+## ✅ Correspondencia con la rúbrica
 
-## ✅ Cumplimiento de la Rúbrica de Evaluación
-
-| Criterio | Ponderación | Nivel de Cumplimiento | Justificación Técnica |
-| :--- | :---: | :---: | :--- |
-| **1. Arquitectura y Entrenamiento de Redes Neuronales** | 30% | **Excelente (100%)** | MLP profundo (128-64-1) con BatchNorm, Dropout, Early Stopping (época 38), ponderación de clases por desbalance (`pos_weight=3.91`) y métricas ROC-AUC (0.8604) / PR-AUC (0.6923). |
-| **2. Lógica Financiera y Retención Rentable** | 25% | **Excelente (100%)** | Modelado formal de la ecuación de ganancia neta esperada; restricción estricta que bloquea gasto en 1,139 clientes deficitarios catalogados como **"Salida Permitida"**. |
-| **3. Desarrollo y Usabilidad de la Aplicación** | 20% | **Excelente (100%)** | App interactiva en Streamlit completa con Buscador por cliente (scoring en vivo + SHAP), Panel consolidado de cartera (KPIs y dispersión) y Simulador dinámico de costos/ROI. |
-| **4. Calidad del Informe Ejecutivo y Explicabilidad** | 15% | **Excelente (100%)** | Informe ejecutivo completo estructurado según las 5 secciones oficiales, con métricas de ROI (686.67%), capital rescatable (\$484.4M), SHAP global y exportado en PDF. |
-| **5. Reproducibilidad y Calidad de Código** | 10% | **Excelente (100%)** | Código modular desacoplado (`src/`), canal de inferencia separado de entrenamiento, archivos `.pt`/`.joblib` persistidos y `requirements.txt` completo. |
-
+| Criterio | Dónde se cubre |
+|---|---|
+| 1. Arquitectura y entrenamiento | `src/model.py`, `src/preprocessing.py`: MLP, escalado, one-hot, `pos_weight`, Dropout, BatchNorm, Early Stopping, exclusión de `Complain` |
+| 2. Lógica financiera | `src/financial_logic.py`: fórmula de ganancia neta por incentivo; "Salida Permitida" definida por la fórmula |
+| 3. Aplicación | `app/app.py`: buscador por cliente, panel de cartera y simulador |
+| 4. Informe y explicabilidad | `docs/Informe_Ejecutivo_Deep_Retention.pdf`: ROI, capital, matriz, SHAP |
+| 5. Reproducibilidad | `requirements.txt` fijado, semilla, inferencia separada del entrenamiento, pesos guardados, `tests/` |

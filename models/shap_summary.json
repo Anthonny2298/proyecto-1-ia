@@ -17,82 +17,44 @@
     "ranking": [
         {
             "feature": "NumOfProducts",
-            "importance": 0.11810386187841904
+            "importance": 0.8915678096126556
         },
         {
             "feature": "Age",
-            "importance": 0.11439730430652315
+            "importance": 0.6250676627753736
         },
         {
             "feature": "IsActiveMember",
-            "importance": 0.0696269996109537
-        },
-        {
-            "feature": "Geography_Germany",
-            "importance": 0.03288640482087895
+            "importance": 0.5314545675274794
         },
         {
             "feature": "Balance",
-            "importance": 0.02941528711253488
+            "importance": 0.33626145179943384
         },
         {
-            "feature": "Gender_Female",
-            "importance": 0.023980785908020028
+            "feature": "Geography",
+            "importance": 0.2548993599359577
         },
         {
-            "feature": "Gender_Male",
-            "importance": 0.02204187259131158
-        },
-        {
-            "feature": "Geography_France",
-            "importance": 0.01636331585433336
-        },
-        {
-            "feature": "Tenure",
-            "importance": 0.011168437867008966
+            "feature": "Gender",
+            "importance": 0.2516617407891157
         },
         {
             "feature": "CreditScore",
-            "importance": 0.00863318156635629
-        },
-        {
-            "feature": "Geography_Spain",
-            "importance": 0.008416883679680935
-        },
-        {
-            "feature": "HasCrCard",
-            "importance": 0.008116342761253946
+            "importance": 0.11437743320733605
         },
         {
             "feature": "EstimatedSalary",
-            "importance": 0.0072358796953618095
+            "importance": 0.0808695205155318
+        },
+        {
+            "feature": "Tenure",
+            "importance": 0.07088025999949897
+        },
+        {
+            "feature": "HasCrCard",
+            "importance": 0.06599575734302701
         }
     ],
-    "top_factors": [
-        {
-            "rank": 1,
-            "feature": "NumOfProducts",
-            "importance": 0.11810386187841904
-        },
-        {
-            "rank": 2,
-            "feature": "Age",
-            "importance": 0.11439730430652315
-        },
-        {
-            "rank": 3,
-            "feature": "IsActiveMember",
-            "importance": 0.0696269996109537
-        },
-        {
-            "rank": 4,
-            "feature": "Geography_Germany",
-            "importance": 0.03288640482087895
-        },
-        {
-            "rank": 5,
-            "feature": "Balance",
-            "importance": 0.02941528711253488
-        }
-    ]
+    "n_samples": 500
 }
